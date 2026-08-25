@@ -6,7 +6,6 @@ class Embedder:
     def __init__(
         self,
         model_name=(
-            "sentence-transformers/"
             "BAAI/bge-m3"
         )
     ):
