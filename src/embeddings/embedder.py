@@ -12,9 +12,8 @@ class Embedder:
         model_path = snapshot_download(repo_id=model_name)
 
         self.model = SentenceTransformer(
-            model_name,
+            model_path,
             device="cuda"
-            
         )
 
     def embed_documents(
