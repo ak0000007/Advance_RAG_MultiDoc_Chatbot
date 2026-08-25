@@ -7,7 +7,7 @@ class Embedder:
         self,
         model_name=(
             "sentence-transformers/"
-            "all-MiniLM-L6-v2"
+            "BAAI/bge-m3"
         )
     ):
 
@@ -24,6 +24,8 @@ class Embedder:
         return self.model.encode(
 
             texts,
+
+            batch_size=8,
 
             convert_to_numpy=True,
 
