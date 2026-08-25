@@ -1,5 +1,5 @@
 from sentence_transformers import SentenceTransformer
-
+from huggingface_hub import snapshot_download
 
 class Embedder:
 
@@ -9,11 +9,12 @@ class Embedder:
             "BAAI/bge-m3"
         )
     ):
+        model_path = snapshot_download(repo_id=model_name)
 
         self.model = SentenceTransformer(
             model_name,
-            device="cuda",
-            model_kwargs={"trust_remote_code": True}
+            device="cuda"
+            
         )
 
     def embed_documents(
