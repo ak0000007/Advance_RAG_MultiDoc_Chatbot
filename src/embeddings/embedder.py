@@ -1,5 +1,6 @@
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import snapshot_download
+import torch
 
 class Embedder:
 
@@ -13,7 +14,22 @@ class Embedder:
 
         self.model = SentenceTransformer(
             model_path,
-            device="cuda"
+            device=None
+        )
+
+        if device is None:
+
+            device = (
+                "cuda"
+                if torch.cuda.is_available()
+                else "cpu"
+            )
+
+        self.device = device
+
+        self.model = SentenceTransformer(
+            model_name,
+            device=self.device
         )
 
     def embed_documents(
