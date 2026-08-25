@@ -12,7 +12,8 @@ class Embedder:
 
         self.model = SentenceTransformer(
             model_name,
-            device="cuda"
+            device="cuda",
+            model_kwargs={"trust_remote_code": True}
         )
 
     def embed_documents(
