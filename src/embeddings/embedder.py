@@ -17,6 +17,8 @@ class Embedder:
             device=None
         )
 
+        
+
         if device is None:
 
             device = (
