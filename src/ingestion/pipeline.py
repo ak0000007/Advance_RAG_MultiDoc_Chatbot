@@ -1,36 +1,44 @@
-from src.ingestion.pdf_loader import PDFLoader
-from src.ingestion.docx_loader import DOCXLoader
-from src.ingestion.txt_loader import TXTLoader
-from src.ingestion.csv_loader import CSVLoader
-from src.ingestion.excel_loader import ExcelLoader
+from pathlib import Path
+
+from src.ingestion.factory import get_loader
 
 
-LOADER_MAP = {
+SUPPORTED_EXTENSIONS = {
 
-    ".pdf": PDFLoader,
-
-    ".docx": DOCXLoader,
-
-    ".txt": TXTLoader,
-
-    ".csv": CSVLoader,
-
-    ".xlsx": ExcelLoader,
+    ".pdf",
+    ".docx",
+    ".txt",
+    ".csv",
+    ".xlsx"
 }
 
 
-def get_loader(file_path: str):
+def load_documents(directory: str):
 
-    extension = "." + file_path.split(".")[-1].lower()
+    directory = Path(directory)
 
-    loader_class = LOADER_MAP.get(
-        extension
-    )
+    documents = []
 
-    if loader_class is None:
+    for file_path in directory.rglob("*"):
 
-        raise ValueError(
-            f"Unsupported file type: {extension}"
+        if not file_path.is_file():
+            continue
+
+        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+
+        print(
+            f"Loading: {file_path}"
         )
 
-    return loader_class()
+        loader = get_loader(
+            str(file_path)
+        )
+
+        documents.append(
+            loader.load(
+                str(file_path)
+            )
+        )
+
+    return documents
