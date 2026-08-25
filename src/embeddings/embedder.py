@@ -6,31 +6,20 @@ class Embedder:
 
     def __init__(
         self,
-        model_name=(
-            "BAAI/bge-m3"
-        )
+        model_name="BAAI/bge-m3",
+        device=None
     ):
-        model_path = snapshot_download(repo_id=model_name)
-
-        self.model = SentenceTransformer(
-            model_path,
-            device=None
-        )
-
-        
-
         if device is None:
-
             device = (
                 "cuda"
                 if torch.cuda.is_available()
                 else "cpu"
             )
-
         self.device = device
 
+        model_path = snapshot_download(repo_id=model_name)
         self.model = SentenceTransformer(
-            model_name,
+            model_path,
             device=self.device
         )
 
