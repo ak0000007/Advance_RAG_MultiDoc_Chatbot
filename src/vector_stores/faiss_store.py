@@ -28,7 +28,26 @@ class VectorStore:
 
         return self.vector_store
 
-    def save(self, directory):
+    def add_documents(
+        self,
+        documents
+    ):
+
+        if self.vector_store is None:
+
+            raise ValueError(
+                "Vector store has not been loaded "
+                "or created."
+            )
+
+        self.vector_store.add_documents(
+            documents
+        )
+
+    def save(
+        self,
+        directory
+    ):
 
         if self.vector_store is None:
 
@@ -40,7 +59,10 @@ class VectorStore:
             directory
         )
 
-    def load(self, directory):
+    def load(
+        self,
+        directory
+    ):
 
         self.vector_store = (
             FAISS.load_local(
