@@ -7,3 +7,7 @@ sentence-transformers
 huggingface_hub
 faiss-gpu
 numpy
+langchain
+langchain-community
+langchain-huggingface
+unstructured
