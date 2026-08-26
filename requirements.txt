@@ -2,11 +2,11 @@ pandas
 openpyxl
 python-docx
 pypdf
-pyMuPDFLoader
+pymupdf
 langchain-text-splitters
 sentence-transformers
 huggingface_hub
-faiss-gpu
+faiss-cpu
 numpy
 langchain
 langchain-community
