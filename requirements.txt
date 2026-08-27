@@ -6,9 +6,11 @@ pymupdf
 langchain-text-splitters
 sentence-transformers
 huggingface_hub
-faiss-cpu
 numpy
 langchain
+langchain_classic
+langchain-qdrant
+qdrant-client
 langchain-community
 langchain-huggingface
 langchain-core
