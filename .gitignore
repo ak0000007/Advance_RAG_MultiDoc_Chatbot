@@ -20,8 +20,9 @@ data/*
 !data/.gitkeep
 
 # Generated vector stores
-vector_store/*
-!vector_store/.gitkeep
+vector_stores/*
+record_manager.db
+!vector_stores/.gitkeep
 
 # OS files
 .DS_Store

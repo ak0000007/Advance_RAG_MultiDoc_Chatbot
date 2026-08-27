@@ -11,4 +11,5 @@ numpy
 langchain
 langchain-community
 langchain-huggingface
+langchain-core
 unstructured
