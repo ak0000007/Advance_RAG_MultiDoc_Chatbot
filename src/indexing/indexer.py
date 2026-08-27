@@ -2,9 +2,12 @@ import hashlib
 from typing import Iterable
 
 from langchain_core.documents import Document
-from langchain_core.indexing import index
 from langchain_core.vectorstores import VectorStore
-from langchain_community.indexes import SQLRecordManager
+from langchain_classic.indexes import (
+    SQLRecordManager,
+    index,
+)
+
 
 
 # DocumentIndexer manages document loading, ID generation, hashing, and writing to vector database.
