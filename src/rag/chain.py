@@ -3,7 +3,8 @@ from langchain_core.runnables import RunnablePassthrough
 
 
 def format_docs(docs):
-    """Convert retrieved LangChain Documents into plain text."""
+    """Convert retrieved Documents into plain text."""
+
     return "\n\n".join(
         doc.page_content
         for doc in docs
@@ -11,42 +12,23 @@ def format_docs(docs):
 
 
 def build_rag_chain(retriever, llm):
-    """
-    Build a modern LangChain RAG pipeline.
-
-    Flow:
-        Question
-            ↓
-        Retriever
-            ↓
-        Documents
-            ↓
-        Context formatting
-            ↓
-        Prompt
-            ↓
-        LLM
-    """
 
     prompt = ChatPromptTemplate.from_messages([
         (
-            "system",
-            """You are a helpful CRM assistant.
-
-Answer the user's question using only the information
-provided in the context.
-
-If the answer cannot be found in the context,
-clearly say that you do not have enough information.
+            "human",
+            """Use the following context to answer the question.
 
 Context:
 {context}
-"""
-        ),
-        (
-            "human",
-            "{question}"
-        ),
+
+Question:
+{question}
+
+Answer using only the information in the context.
+
+If the answer cannot be found in the context,
+say that you do not have enough information."""
+        )
     ])
 
     rag_chain = (
