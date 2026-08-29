@@ -7,7 +7,7 @@ from transformers import (
     pipeline,
 )
 
-from langchain_huggingface import HuggingFacePipeline
+from langchain_huggingface import HuggingFacePipeline, ChatHuggingFace
 
 
 MODEL_ID = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
@@ -38,8 +38,11 @@ def load_llm():
         tokenizer=tokenizer,
         max_new_tokens=400,
         do_sample=False,
+        return_full_text=False,
     )
 
-    return HuggingFacePipeline(
+    llm = HuggingFacePipeline(
         pipeline=text_pipeline
     )
+
+    return ChatHuggingFace(llm=llm)
