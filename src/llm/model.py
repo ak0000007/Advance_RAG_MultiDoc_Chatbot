@@ -3,6 +3,7 @@ import torch
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
+    BitsAndBytesConfig,
     pipeline,
 )
 
@@ -13,10 +14,13 @@ MODEL_ID = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
 
 
 def load_llm():
-    """
-    Load DeepSeek-R1-0528-Qwen3-8B and expose it
-    as a LangChain Runnable.
-    """
+
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_ID
@@ -24,7 +28,7 @@ def load_llm():
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.bfloat16,
+        quantization_config=quantization_config,
         device_map="auto",
     )
 
@@ -32,12 +36,10 @@ def load_llm():
         "text-generation",
         model=model,
         tokenizer=tokenizer,
-        max_new_tokens=512,
+        max_new_tokens=400,
         do_sample=False,
     )
 
-    llm = HuggingFacePipeline(
+    return HuggingFacePipeline(
         pipeline=text_pipeline
     )
-
-    return llm
