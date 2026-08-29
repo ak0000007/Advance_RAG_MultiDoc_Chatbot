@@ -15,3 +15,5 @@ langchain-community
 langchain-huggingface
 langchain-core
 unstructured
+bitsandbytes>=0.46.1
+accelerate
