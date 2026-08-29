@@ -10,10 +10,14 @@ from transformers import (
 from langchain_huggingface import HuggingFacePipeline
 
 
-MODEL_ID = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
+MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
 
 
 def load_llm():
+
+    # --------------------------------------------------
+    # 1. Quantization configuration
+    # --------------------------------------------------
 
     quantization_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -22,15 +26,27 @@ def load_llm():
         bnb_4bit_use_double_quant=True,
     )
 
+    # --------------------------------------------------
+    # 2. Tokenizer
+    # --------------------------------------------------
+
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_ID
     )
+
+    # --------------------------------------------------
+    # 3. Model
+    # --------------------------------------------------
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         quantization_config=quantization_config,
         device_map="auto",
     )
+
+    # --------------------------------------------------
+    # 4. Hugging Face generation pipeline
+    # --------------------------------------------------
 
     text_pipeline = pipeline(
         "text-generation",
@@ -40,9 +56,12 @@ def load_llm():
         do_sample=False,
     )
 
-    llm = HuggingFacePipeline(
-    pipeline=text_pipeline
-)
+    # --------------------------------------------------
+    # 5. Convert HF pipeline into LangChain LLM
+    # --------------------------------------------------
 
-    return llm, tokenizer, model
-    
+    llm = HuggingFacePipeline(
+        pipeline=text_pipeline
+    )
+
+    return llm
