@@ -25,19 +25,18 @@ class QdrantStore:
 
         # Remote Qdrant
         if url:
-            self.vector_store = QdrantVectorStore.from_existing_collection(
+            self.vector_store = QdrantVectorStore.construct_instance(
                 embedding=embeddings,
                 collection_name=collection_name,
-                url=url,
-                api_key=api_key,
+                client_options={"url": url, "api_key": api_key},
             )
 
         # Local persistent Qdrant
         elif path:
-            self.vector_store = QdrantVectorStore.from_existing_collection(
+            self.vector_store = QdrantVectorStore.construct_instance(
                 embedding=embeddings,
                 collection_name=collection_name,
-                path=path,
+                client_options={"path": path},
             )
 
         else:
