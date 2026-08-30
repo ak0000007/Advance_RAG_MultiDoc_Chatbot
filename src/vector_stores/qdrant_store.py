@@ -54,5 +54,5 @@ class QdrantStore:
         """
 
         return self.vector_store.as_retriever(
-            search_kwargs=search_kwargs or {}
+            search_kwargs={"k": 4}
         )
