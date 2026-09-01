@@ -1,5 +1,6 @@
 from langchain_qdrant import QdrantVectorStore
 from langchain_core.embeddings import Embeddings
+from qdrant_client.http import models
 
 
 class QdrantStore:
@@ -47,11 +48,44 @@ class QdrantStore:
     def as_retriever(
         self,
         search_kwargs: dict | None = None,
+        metadata_filter: dict | None = None,
     ):
         """
         Return a LangChain retriever.
+        Optional metadata_filter applies exact match filtering on document metadata.
         """
+        kwargs = search_kwargs.copy() if search_kwargs else {"k": 4}
+
+        if metadata_filter:
+            must_conditions = [
+                models.FieldCondition(
+                    key=f"metadata.{key}",
+                    match=models.MatchValue(value=value)
+                )
+                for key, value in metadata_filter.items()
+            ]
+            kwargs["filter"] = models.Filter(must=must_conditions)
 
         return self.vector_store.as_retriever(
-            search_kwargs=search_kwargs or {"k": 4}
+            search_kwargs=kwargs
         )
+
+    def as_dynamic_retriever(self, base_search_kwargs: dict | None = None):
+        """
+        Returns a LangChain Runnable that dynamically applies metadata_filter 
+        from the input payload at query time.
+        """
+        from langchain_core.runnables import RunnableLambda
+
+        def _retrieve(inputs: dict):
+            question = inputs.get("question", "")
+            metadata_filter = inputs.get("metadata_filter", None)
+            
+            # Delegate to the Qdrant-specific retriever builder
+            retriever = self.as_retriever(
+                search_kwargs=base_search_kwargs, 
+                metadata_filter=metadata_filter
+            )
+            return retriever.invoke(question)
+
+        return RunnableLambda(_retrieve)

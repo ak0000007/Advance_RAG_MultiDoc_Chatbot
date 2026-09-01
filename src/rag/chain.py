@@ -11,8 +11,11 @@ def format_docs(docs):
     )
 
 
-def build_rag_chain(retriever, llm):
-
+def build_rag_chain(retriever_runnable, llm):
+    """
+    Builds the RAG chain.
+    Depends on abstractions (retriever_runnable), not concrete implementations (QdrantStore).
+    """
     prompt = ChatPromptTemplate.from_messages([
         (
             "human",
@@ -33,8 +36,10 @@ say that you do not have enough information."""
 
     rag_chain = (
         {
-            "context": retriever | format_docs,
-            "question": RunnablePassthrough(),
+            # retriever_runnable is responsible for handling the input dict
+            # (including metadata_filter) and returning Documents.
+            "context": retriever_runnable | format_docs,
+            "question": lambda x: x["question"],
         }
         | prompt
         | llm
