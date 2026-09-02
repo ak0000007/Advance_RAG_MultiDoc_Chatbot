@@ -45,21 +45,30 @@ def build_rag_chain(
     output_parser=None,
     format_docs_fn: Optional[Callable] = None,
 ):
-    """Build a simple RAG chain descriptor.
-
-    Returns a dict with the provided components and sensible defaults.
     """
+    Builds a production-ready LCEL RAG chain.
 
-    if prompt_template is None:
-        prompt_template = DEFAULT_PROMPT_TEMPLATE
+    Args:
+        retriever_runnable: LangChain Runnable returning list[Document].
+        llm: LangChain BaseLanguageModel or Runnable.
+        prompt_template: Optional custom prompt template string.
+        output_parser: Optional custom output parser.
+        format_docs_fn: Optional formatting function.
+    """
+    template = prompt_template or DEFAULT_PROMPT_TEMPLATE
+    prompt = ChatPromptTemplate.from_messages([("human", template)])
+    parser = output_parser or StrOutputParser()
+    doc_formatter = format_docs_fn or format_docs
 
-    if format_docs_fn is None:
-        format_docs_fn = format_docs
+    # LCEL pipeline (RunnableSequence), NOT a dictionary
+    rag_chain = (
+        {
+            "context": retriever_runnable | doc_formatter,
+            "question": lambda x: x["question"],
+        }
+        | prompt
+        | llm
+        | parser
+    )
 
-    return {
-        "retriever": retriever_runnable,
-        "llm": llm,
-        "prompt_template": prompt_template,
-        "output_parser": output_parser or StrOutputParser(),
-        "format_docs_fn": format_docs_fn,
-    }
+    return rag_chain
