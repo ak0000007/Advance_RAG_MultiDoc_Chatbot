@@ -203,10 +203,19 @@ class CrossEncoderReranker:
 
         def _retrieve_and_rerank(inputs: dict) -> list[Document]:
             # Step 1: Retrieve using the original retriever
-            if hasattr(retriever_runnable, "invoke"):
-                docs = retriever_runnable.invoke(inputs)
-            else:
-                docs = retriever_runnable(inputs)
+            try:
+                if hasattr(retriever_runnable, "invoke"):
+                    docs = retriever_runnable.invoke(inputs)
+                else:
+                    docs = retriever_runnable(inputs)
+            except AttributeError as e:
+                if "'dict' object" in str(e) and isinstance(inputs, dict) and "question" in inputs:
+                    if hasattr(retriever_runnable, "invoke"):
+                        docs = retriever_runnable.invoke(inputs["question"])
+                    else:
+                        docs = retriever_runnable(inputs["question"])
+                else:
+                    raise
 
             # Step 2: Rerank
             question = (

@@ -60,10 +60,22 @@ def build_rag_chain(
     parser = output_parser or StrOutputParser()
     doc_formatter = format_docs_fn or format_docs
 
+    from langchain_core.runnables import RunnableLambda
+
+    def _invoke_retriever(inputs):
+        try:
+            # Try passing the full dictionary for dynamic retrievers (that need metadata_filter)
+            return retriever_runnable.invoke(inputs)
+        except AttributeError as e:
+            # Fallback for standard LangChain retrievers (like VectorStoreRetriever) that expect a string
+            if "'dict' object" in str(e) and isinstance(inputs, dict) and "question" in inputs:
+                return retriever_runnable.invoke(inputs["question"])
+            raise
+
     # LCEL pipeline (RunnableSequence), NOT a dictionary
     rag_chain = (
         {
-            "context": retriever_runnable | doc_formatter,
+            "context": RunnableLambda(_invoke_retriever) | doc_formatter,
             "question": lambda x: x["question"],
         }
         | prompt

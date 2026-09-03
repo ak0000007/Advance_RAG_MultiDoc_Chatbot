@@ -124,10 +124,19 @@ class HybridRetriever:
             question = inputs.get("question", "")
             all_results: list[list[Document]] = []
             for retriever in self.retrievers:
-                if hasattr(retriever, "invoke"):
-                    docs = retriever.invoke(inputs)
-                else:
-                    docs = retriever(inputs)
+                try:
+                    if hasattr(retriever, "invoke"):
+                        docs = retriever.invoke(inputs)
+                    else:
+                        docs = retriever(inputs)
+                except AttributeError as e:
+                    if "'dict' object" in str(e):
+                        if hasattr(retriever, "invoke"):
+                            docs = retriever.invoke(question)
+                        else:
+                            docs = retriever(question)
+                    else:
+                        raise
                 all_results.append(docs)
 
             fused = reciprocal_rank_fusion(all_results, k=self.rrf_k)
