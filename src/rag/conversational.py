@@ -1,54 +1,39 @@
 """
-Conversational RAG application layer.
+Conversational RAG.
 
-Responsibilities
-----------------
-1. Maintain short-term conversation history.
-2. Rewrite follow-up questions into standalone retrieval queries.
-3. Preserve metadata filters.
-4. Execute the existing RAG chain.
-5. Expose a LangChain RunnableWithMessageHistory interface.
+This module adds conversation awareness on top of the existing
+RAG chain without changing the retrieval or generation pipeline.
 
-Architecture
+Architecture:
 
 User Question
-      |
-      v
+      ↓
 Conversation History
-      |
-      v
+      ↓
 Query Rewriter
-      |
-      v
+      ↓
 Standalone Retrieval Question
-      |
-      v
+      ↓
 Existing RAG Chain
-      |
-      v
+      ↓
 Final Answer
-      |
-      v
+      ↓
 Conversation History
 """
 
-from typing import Dict, Optional, Any
+from typing import Dict
 
 from langchain_core.chat_history import (
     BaseChatMessageHistory,
     InMemoryChatMessageHistory,
 )
 
-from langchain_core.messages import (
-    BaseMessage,
-)
-
-from langchain_core.output_parsers import StrOutputParser
-
 from langchain_core.prompts import (
     ChatPromptTemplate,
     MessagesPlaceholder,
 )
+
+from langchain_core.output_parsers import StrOutputParser
 
 from langchain_core.runnables import (
     RunnableLambda,
@@ -56,109 +41,56 @@ from langchain_core.runnables import (
 )
 
 
-# ============================================================
-# 1. CONVERSATION STORE
-# ============================================================
-
 class ConversationStore:
     """
-    In-memory short-term conversation store.
+    Simple in-memory conversation store.
 
-    Each session_id gets an independent conversation history.
+    Each session_id gets its own chat history.
 
     Example:
 
-        session_1
-            HumanMessage
-            AIMessage
-            HumanMessage
-            AIMessage
-
-        session_2
-            HumanMessage
-            AIMessage
-
-    This is intentionally simple for Phase 4.
-
-    Later, the same interface can be backed by:
-        - Redis
-        - PostgreSQL
-        - MongoDB
-        - another persistent store
+        demo_user
+            ├── HumanMessage
+            ├── AIMessage
+            ├── HumanMessage
+            └── AIMessage
     """
 
     def __init__(self):
-        self._store: Dict[
-            str,
-            BaseChatMessageHistory
-        ] = {}
+        self._store: Dict[str, BaseChatMessageHistory] = {}
 
-    def get_history(
-        self,
-        session_id: str
-    ) -> BaseChatMessageHistory:
+    def get_history(self, session_id: str) -> BaseChatMessageHistory:
         """
-        Get the history associated with a session.
+        Return the chat history for a session.
 
         Creates a new history if the session does not exist.
         """
 
         if session_id not in self._store:
-            self._store[
-                session_id
-            ] = InMemoryChatMessageHistory()
+            self._store[session_id] = InMemoryChatMessageHistory()
 
         return self._store[session_id]
 
-    def clear_history(
-        self,
-        session_id: str
-    ) -> None:
+    def clear_history(self, session_id: str) -> None:
         """
-        Delete all messages from a session.
+        Clear the conversation for a session.
         """
 
         if session_id in self._store:
             self._store[session_id].clear()
 
-    def list_sessions(self):
-        """
-        Return all active session IDs.
-
-        Useful later for application/session management.
-        """
-
-        return list(self._store.keys())
-
-
-# ============================================================
-# 2. QUERY REWRITER
-# ============================================================
 
 def build_query_rewriter(llm):
     """
-    Build the history-aware query rewriting chain.
+    Build an LCEL query-rewriting chain.
 
-    Input:
+    The rewriter converts the latest user question into a
+    standalone search query using conversation history.
 
-        history
-        question
+    IMPORTANT:
+    The rewriter does NOT answer the question.
 
-    Output:
-
-        standalone retrieval query
-
-    Example:
-
-        History:
-            User: What is RAG?
-            AI: RAG combines retrieval and generation.
-
-        Question:
-            Why is it useful?
-
-        Output:
-            Why is Retrieval-Augmented Generation useful?
+    It only transforms the question for retrieval.
     """
 
     prompt = ChatPromptTemplate.from_messages(
@@ -166,39 +98,140 @@ def build_query_rewriter(llm):
             (
                 "system",
                 """
-You are the query rewriting component of a RAG system.
+You are a query rewriting component inside a Retrieval-Augmented
+Generation (RAG) system.
 
-Your ONLY job is to convert the user's latest question
-into a standalone search query.
+Your ONLY task is to rewrite the user's latest question into a
+standalone SEARCH QUERY that can be sent to a document retriever.
 
-Rules:
+You are NOT the answer generator.
 
-1. Preserve the user's original intent.
-2. Use conversation history only to resolve references.
-3. Resolve references such as:
+STRICT RULES:
+
+1. Output ONLY a search query.
+
+2. NEVER answer the user's question.
+
+3. NEVER provide facts, explanations, conclusions, or background
+   information that are not part of the conversation history.
+
+4. Use the conversation history ONLY to resolve references in the
+   latest question.
+
+5. Resolve references such as:
    - it
    - this
    - that
    - they
+   - them
    - previous section
    - above
    - earlier discussion
-4. Include important entities from the conversation when needed.
-5. Do NOT answer the question.
-6. Do NOT explain your reasoning.
-7. Do NOT add information that is not present in the conversation.
-8. Output ONLY the standalone search query.
-9. If the question is already standalone, return it unchanged.
-10. Never invent a section, document, entity, topic, or fact that
-    is not supported by the conversation history.
-11. If a reference cannot be resolved from the conversation,
-    preserve the user's wording rather than guessing.
+   - the first one
+   - the second one
+   - this document
+   - that document
 
+6. When resolving a reference, use ONLY information explicitly
+   established in the conversation history.
+
+7. NEVER invent:
+   - sections
+   - documents
+   - entities
+   - events
+   - topics
+   - facts
+   - dates
+   - explanations
+
+8. If a reference cannot be resolved from the conversation
+   history, preserve the user's original wording instead of
+   guessing.
+
+9. Do NOT add an answer to the rewritten query.
+
+10. Do NOT add a date, fact, explanation, or conclusion unless
+    that information is explicitly needed to resolve the reference
+    AND is already present in the conversation.
+
+11. If the user's question is already a standalone question,
+    return it unchanged.
+
+12. Keep the rewritten query concise and retrieval-friendly.
+
+13. Do not use phrases such as:
+    "The answer is..."
+    "The document says..."
+    "It happened because..."
+    "The answer to your question is..."
+
+14. Do not output multiple alternatives.
+
+15. Do not explain what you changed.
+
+16. Return exactly ONE standalone search query.
+
+EXAMPLES:
+
+Example 1:
+
+Conversation:
+User: When was the United States founded?
+Assistant: The United States was founded after thirteen British
+colonies declared independence in 1776.
+
+Latest question:
+When did it happen?
+
+Correct output:
+When was the United States founded?
+
+Incorrect output:
+The United States was founded on July 4, 1776.
+
+Example 2:
+
+Conversation:
+User: What are the three branches created by the Constitution?
+Assistant: The three branches are the legislative, executive,
+and judicial branches.
+
+Latest question:
+What does the second one do?
+
+Correct output:
+What does the executive branch do?
+
+Example 3:
+
+Conversation:
+User: What is the document about?
+Assistant: The document is about the history of the United States.
+
+Latest question:
+What happened in the previous section?
+
+Correct output:
+What happened in the previous section?
+
+Incorrect output:
+The previous section discussed early exploration and settlement.
+
+Example 4:
+
+Conversation:
+User: What is the capital of France?
+Assistant: Paris is the capital of France.
+
+Latest question:
+What is the population of Germany?
+
+Correct output:
+What is the population of Germany?
 """,
             ),
-            MessagesPlaceholder(
-                variable_name="history"
-            ),
+            MessagesPlaceholder(variable_name="history"),
             (
                 "human",
                 "{question}",
@@ -210,15 +243,9 @@ Rules:
         prompt
         | llm
         | StrOutputParser()
-        | RunnableLambda(
-            lambda text: text.strip()
-        )
+        | RunnableLambda(lambda text: text.strip())
     )
 
-
-# ============================================================
-# 3. CONVERSATIONAL RAG
-# ============================================================
 
 def build_conversational_rag(
     rag_chain,
@@ -226,81 +253,45 @@ def build_conversational_rag(
     history_store: ConversationStore,
 ):
     """
-    Build the complete conversational RAG application.
+    Build the complete conversational RAG chain.
 
-    The existing RAG chain remains responsible for:
+    Flow:
 
-        retrieval
-        hybrid retrieval
-        reranking
-        prompt construction
-        answer generation
-
-    This layer is responsible for:
-
-        conversation history
-        query rewriting
-        session management
-        metadata filter propagation
+        User Question
+              ↓
+        Conversation History
+              ↓
+        Query Rewriter
+              ↓
+        Existing RAG Chain
+              ↓
+        Final Answer
     """
 
     query_rewriter = build_query_rewriter(llm)
 
-    def run_conversational_rag(
-        inputs: Dict[str, Any]
-    ):
-        """
-        Execute one conversational RAG turn.
-
-        Expected input:
-
-        {
-            "question": "...",
-            "history": [...],
-            "metadata_filter": {...}
-        }
-
-        Returns:
-
-            clean answer string
-        """
-
+    def run_conversational_rag(inputs):
         question = inputs["question"]
+        history = inputs.get("history", [])
+        metadata_filter = inputs.get("metadata_filter")
 
-        history = inputs.get(
-            "history",
-            []
-        )
-
-        metadata_filter = inputs.get(
-            "metadata_filter"
-        )
-
-        # ----------------------------------------------------
-        # STEP 1
-        # Determine retrieval question
-        # ----------------------------------------------------
-
-        if history:
-
-            retrieval_question = (
-                query_rewriter.invoke(
-                    {
-                        "history": history,
-                        "question": question,
-                    }
-                )
-            )
-
-        else:
-
+        # First question in a conversation:
+        # no rewriting is necessary.
+        if not history:
             retrieval_question = question
 
-        # ----------------------------------------------------
-        # STEP 2
-        # Run the existing RAG chain
-        # ----------------------------------------------------
+        # Follow-up question:
+        # rewrite it using the conversation history.
+        else:
+            retrieval_question = query_rewriter.invoke(
+                {
+                    "history": history,
+                    "question": question,
+                }
+            )
 
+        # Send the rewritten/standalone question to the
+        # existing RAG pipeline.
         answer = rag_chain.invoke(
             {
                 "question": retrieval_question,
@@ -310,27 +301,15 @@ def build_conversational_rag(
 
         return answer
 
-    # --------------------------------------------------------
-    # STEP 3
-    # Convert function into LangChain Runnable
-    # --------------------------------------------------------
-
     conversational_chain = RunnableLambda(
         run_conversational_rag
     )
-
-    # --------------------------------------------------------
-    # STEP 4
-    # Attach session-based message history
-    # --------------------------------------------------------
 
     conversational_chain_with_history = (
         RunnableWithMessageHistory(
             conversational_chain,
             history_store.get_history,
-
             input_messages_key="question",
-
             history_messages_key="history",
         )
     )
