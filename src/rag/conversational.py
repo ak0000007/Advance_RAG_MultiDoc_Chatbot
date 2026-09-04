@@ -160,6 +160,21 @@ STRICT RULES:
     Do not use the general topic of the conversation as a substitute
     for an unresolved reference.
 
+    For example:
+
+    Conversation:
+    User: What is the document about?
+    Assistant: The document is about the history of the United States.
+
+    Latest question:
+    What happened in the previous section?
+
+    Correct output:
+    What happened in the previous section?
+
+    Incorrect output:
+    The previous section discussed the history of the United States.
+
 
 9. Do NOT add an answer to the rewritten query.
 
