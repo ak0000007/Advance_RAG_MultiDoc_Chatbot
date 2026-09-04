@@ -189,6 +189,11 @@ Rules:
 7. Do NOT add information that is not present in the conversation.
 8. Output ONLY the standalone search query.
 9. If the question is already standalone, return it unchanged.
+10. Never invent a section, document, entity, topic, or fact that
+    is not supported by the conversation history.
+11. If a reference cannot be resolved from the conversation,
+    preserve the user's wording rather than guessing.
+
 """,
             ),
             MessagesPlaceholder(
