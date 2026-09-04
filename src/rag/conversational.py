@@ -149,6 +149,18 @@ STRICT RULES:
    history, preserve the user's original wording instead of
    guessing.
 
+   IMPORTANT REFERENCE RULE:
+
+    If the latest question contains a reference whose target cannot
+    be identified with high confidence from the conversation history,
+    DO NOT rewrite that reference.
+
+    Return the user's latest question unchanged.
+
+    Do not use the general topic of the conversation as a substitute
+    for an unresolved reference.
+
+
 9. Do NOT add an answer to the rewritten query.
 
 10. Do NOT add a date, fact, explanation, or conclusion unless
