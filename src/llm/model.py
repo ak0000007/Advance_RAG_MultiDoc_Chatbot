@@ -4,11 +4,11 @@ Qwen3 LLM loader.
 Provides a LangChain-compatible chat model using
 Qwen3-4B-Instruct-2507.
 
-Important:
-- Uses Qwen's chat template correctly.
-- Disables thinking mode for normal RAG answers.
-- Uses sampling instead of greedy decoding.
-- Returns clean AIMessage responses.
+Features:
+- Proper Qwen chat template
+- Non-thinking mode for normal RAG
+- Sampling-based generation
+- LangChain AIMessage output
 """
 
 from typing import Any, List, Optional
@@ -27,7 +27,10 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.outputs import (
+    ChatGeneration,
+    ChatResult,
+)
 
 
 MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
@@ -36,15 +39,14 @@ MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
 class Qwen3ChatModel(BaseChatModel):
     """
     LangChain ChatModel wrapper around Qwen3.
-
-    This explicitly applies Qwen's chat template so that
-    system/user/assistant roles are preserved correctly.
     """
 
     tokenizer: Any
     model: Any
 
     max_new_tokens: int = 300
+
+    # Qwen recommended settings for non-thinking mode
     temperature: float = 0.7
     top_p: float = 0.8
     top_k: int = 20
@@ -71,7 +73,10 @@ class Qwen3ChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
 
-        # Convert LangChain messages into Qwen chat format.
+        # ---------------------------------------------------------
+        # 1. Convert LangChain messages to Qwen message format
+        # ---------------------------------------------------------
+
         qwen_messages = []
 
         for message in messages:
@@ -96,11 +101,15 @@ class Qwen3ChatModel(BaseChatModel):
             )
 
         # ---------------------------------------------------------
-        # IMPORTANT:
-        # Qwen3 chat template is applied explicitly.
+        # 2. Apply Qwen chat template
         #
-        # enable_thinking=False prevents Qwen from entering
-        # reasoning/thinking mode for our normal RAG responses.
+        # return_dict=True is IMPORTANT.
+        #
+        # It gives us:
+        #   input_ids
+        #   attention_mask
+        #
+        # which can safely be passed to model.generate().
         # ---------------------------------------------------------
 
         inputs = self.tokenizer.apply_chat_template(
@@ -108,47 +117,72 @@ class Qwen3ChatModel(BaseChatModel):
             tokenize=True,
             add_generation_prompt=True,
             enable_thinking=False,
+            return_dict=True,
             return_tensors="pt",
         )
 
-        # Move tensors to the same device as the model.
-        inputs = inputs.to(self.model.device)
+        # ---------------------------------------------------------
+        # 3. Move model inputs to the model device
+        # ---------------------------------------------------------
 
-        input_token_count = inputs.shape[-1]
+        inputs = {
+            key: value.to(self.model.device)
+            for key, value in inputs.items()
+            if hasattr(value, "to")
+        }
+
+        # Number of tokens belonging to the prompt.
+        input_token_count = inputs["input_ids"].shape[-1]
 
         # ---------------------------------------------------------
-        # Generate the answer.
-        #
-        # We intentionally use sampling rather than greedy decoding.
-        # Qwen3 documentation recommends sampling because greedy
-        # decoding can cause repetition/endless-generation problems.
+        # 4. Generate response
         # ---------------------------------------------------------
 
         with torch.no_grad():
 
             generated_ids = self.model.generate(
-                inputs,
+                **inputs,
                 max_new_tokens=self.max_new_tokens,
+
+                # IMPORTANT:
+                # Do not use greedy decoding with Qwen3.
                 do_sample=True,
+
                 temperature=self.temperature,
                 top_p=self.top_p,
                 top_k=self.top_k,
+
                 pad_token_id=self.tokenizer.eos_token_id,
             )
 
-        # Only keep newly generated tokens.
+        # ---------------------------------------------------------
+        # 5. Remove the original prompt tokens
+        #
+        # We only want the newly generated answer.
+        # ---------------------------------------------------------
+
         generated_ids = generated_ids[
-            :, input_token_count:
+            :,
+            input_token_count:
         ]
 
-        # Convert tokens back to text.
+        # ---------------------------------------------------------
+        # 6. Decode generated tokens
+        # ---------------------------------------------------------
+
         response_text = self.tokenizer.decode(
             generated_ids[0],
             skip_special_tokens=True,
         ).strip()
 
+        # ---------------------------------------------------------
+        # 7. Return proper LangChain AIMessage
+        # ---------------------------------------------------------
+
         generation = ChatGeneration(
-            message=AIMessage(content=response_text)
+            message=AIMessage(
+                content=response_text
+            )
         )
 
         return ChatResult(
@@ -158,10 +192,7 @@ class Qwen3ChatModel(BaseChatModel):
 
 def load_llm():
     """
-    Load Qwen3-4B-Instruct-2507 in 4-bit quantization.
-
-    Returns:
-        Qwen3ChatModel
+    Load Qwen3-4B-Instruct-2507 using 4-bit quantization.
     """
 
     # ---------------------------------------------------------
@@ -194,7 +225,7 @@ def load_llm():
     )
 
     # ---------------------------------------------------------
-    # LangChain ChatModel
+    # Create LangChain ChatModel
     # ---------------------------------------------------------
 
     llm = Qwen3ChatModel(
