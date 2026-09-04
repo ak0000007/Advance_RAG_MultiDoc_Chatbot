@@ -55,6 +55,16 @@ class RAGPipeline:
             llm=self.llm,
         )
 
+    def get_chain(self):
+        """
+        Return the underlying LCEL RAG chain.
+
+        This allows higher-level application layers such as
+        conversational RAG and LangGraph to compose the existing
+        RAG pipeline without duplicating its internals.
+        """
+        return self.chain    
+
     def invoke(self, question: str, metadata_filter: Optional[dict] = None, config: Optional[dict] = None):
         """Standard synchronous execution."""
         return self.chain.invoke({"question": question, "metadata_filter": metadata_filter}, config=config)
