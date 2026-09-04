@@ -54,6 +54,7 @@ def load_llm():
         tokenizer=tokenizer,
         max_new_tokens=300,
         do_sample=False,
+        return_full_text=False
     )
 
     # --------------------------------------------------
