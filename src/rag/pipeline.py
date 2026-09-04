@@ -66,3 +66,7 @@ class RAGPipeline:
     def stream(self, question: str, metadata_filter: Optional[dict] = None, config: Optional[dict] = None) -> Iterator[str]:
         """Token streaming for UI/chatbots."""
         return self.chain.stream({"question": question, "metadata_filter": metadata_filter}, config=config)
+
+    def get_chain(self):
+        """Return the underlying LCEL RAG chain."""
+        return self.chain
