@@ -47,14 +47,17 @@ def create_retrieval_node(retriever):
     Create a LangGraph retrieval node.
 
     The node reads the rewritten query from the graph state,
-    invokes the supplied retriever, and stores the resulting
+    invokes the dynamic retriever, and stores the resulting
     documents back into the state.
     """
 
     def retrieval_node(state: RAGState):
         query = state["rewritten_query"]
 
-        documents = retriever.invoke(query)
+        documents = retriever.invoke({
+            "question": query,
+            "metadata_filter": None,
+        })
 
         return {
             "documents": documents
