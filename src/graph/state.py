@@ -8,18 +8,15 @@ the graph as different nodes execute.
 from typing import TypedDict
 
 
-class RAGState(TypedDict):
+class RAGState(TypedDict,total=False):
     """
     Shared state carried through the LangGraph RAG workflow.
+    Each node reads information from this state and returns
 
-    The state will gradually grow as we introduce:
-    - retrieval
-    - reranking
-    - evaluation
-    - retries
-    - generation
+    updates to one or more fields.
     """
 
     question: str
     rewritten_query: str
+    Documents: list[dict]
     answer: str

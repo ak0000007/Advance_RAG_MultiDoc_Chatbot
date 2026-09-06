@@ -39,3 +39,53 @@ def create_query_rewriter_node(llm):
         }
 
     return query_rewriter_node
+
+
+
+def create_retrieval_node(retriever):
+    """
+    Create a LangGraph retrieval node.
+
+    The node reads the rewritten query from the graph state,
+    invokes the supplied retriever, and stores the resulting
+    documents back into the state.
+    """
+
+    def retrieval_node(state: RAGState):
+        query = state["rewritten_query"]
+
+        documents = retriever.invoke(query)
+
+        return {
+            "documents": documents
+        }
+
+    return retrieval_node
+
+
+def create_generation_node(rag_chain):
+    """
+    Create a LangGraph generation node.
+
+    The node reads the question and retrieved documents,
+    then uses the existing RAG chain to generate the answer.
+
+    Note:
+    The current RAG chain performs retrieval internally,
+    so this node is mainly useful as a transitional
+    architecture while we progressively expose the
+    individual RAG components.
+    """
+
+    def generation_node(state: RAGState):
+        question = state["question"]
+
+        answer = rag_chain.invoke({
+            "question": question
+        })
+
+        return {
+            "answer": answer
+        }
+
+    return generation_node
