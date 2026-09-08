@@ -1,7 +1,7 @@
 """
 LangGraph workflow construction.
 
-Builds the first fixed RAG graph:
+Builds the fixed RAG graph:
 
 START
   ↓
@@ -17,6 +17,7 @@ END
 from langgraph.graph import StateGraph, START, END
 
 from src.graph.state import RAGState
+
 from src.graph.nodes import (
     create_query_rewriter_node,
     create_retrieval_node,
@@ -27,10 +28,10 @@ from src.graph.nodes import (
 def build_rag_graph(
     llm,
     retriever,
-    rag_chain,
+    generation_chain,
 ):
     """
-    Build the first fixed LangGraph RAG workflow.
+    Build the LangGraph RAG workflow.
 
     Workflow:
 
@@ -43,16 +44,35 @@ def build_rag_graph(
         generate
           ↓
          END
+
+    Retrieval happens ONLY in the retrieval node.
+
+    Generation consumes the documents already stored
+    in graph state.
     """
 
     graph_builder = StateGraph(RAGState)
 
+    # --------------------------------------------------
     # Create nodes
-    query_rewriter_node = create_query_rewriter_node(llm)
-    retrieval_node = create_retrieval_node(retriever)
-    generation_node = create_generation_node(rag_chain)
+    # --------------------------------------------------
 
+    query_rewriter_node = create_query_rewriter_node(
+        llm
+    )
+
+    retrieval_node = create_retrieval_node(
+        retriever
+    )
+
+    generation_node = create_generation_node(
+        generation_chain
+    )
+
+    # --------------------------------------------------
     # Register nodes
+    # --------------------------------------------------
+
     graph_builder.add_node(
         "rewrite",
         query_rewriter_node,
@@ -68,7 +88,10 @@ def build_rag_graph(
         generation_node,
     )
 
+    # --------------------------------------------------
     # Fixed edges
+    # --------------------------------------------------
+
     graph_builder.add_edge(
         START,
         "rewrite",
