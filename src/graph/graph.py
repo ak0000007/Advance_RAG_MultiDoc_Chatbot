@@ -1,17 +1,20 @@
 """
 LangGraph workflow construction.
 
-Builds the fixed RAG graph:
+Workflow:
 
-START
-  ↓
-Query Rewriter
-  ↓
-Retrieval
-  ↓
-Generation
-  ↓
-END
+                    ┌── rewrite ──┐
+                    │             │
+START ── routing ───┤             ▼
+                    │          retrieve
+                    │             │
+                    └─────────────┘
+                                  │
+                                  ▼
+                               generate
+                                  │
+                                  ▼
+                                 END
 """
 
 from langgraph.graph import StateGraph, START, END
@@ -22,6 +25,7 @@ from src.graph.nodes import (
     create_query_rewriter_node,
     create_retrieval_node,
     create_generation_node,
+    route_question,
 )
 
 
@@ -31,24 +35,25 @@ def build_rag_graph(
     generation_chain,
 ):
     """
-    Build the LangGraph RAG workflow.
+    Build the conditional LangGraph RAG workflow.
 
-    Workflow:
+    Routing logic:
 
-        START
-          ↓
+        No conversation history
+            ↓
+        retrieve directly
+
+        Existing conversation history
+            ↓
         rewrite
-          ↓
+            ↓
         retrieve
-          ↓
+
+        Both paths
+            ↓
         generate
-          ↓
-         END
-
-    Retrieval happens ONLY in the retrieval node.
-
-    Generation consumes the documents already stored
-    in graph state.
+            ↓
+        END
     """
 
     graph_builder = StateGraph(RAGState)
@@ -89,13 +94,21 @@ def build_rag_graph(
     )
 
     # --------------------------------------------------
-    # Fixed edges
+    # Conditional routing
     # --------------------------------------------------
 
-    graph_builder.add_edge(
+    graph_builder.add_conditional_edges(
         START,
-        "rewrite",
+        route_question,
+        {
+            "rewrite": "rewrite",
+            "retrieve": "retrieve",
+        },
     )
+
+    # --------------------------------------------------
+    # Fixed edges after routing
+    # --------------------------------------------------
 
     graph_builder.add_edge(
         "rewrite",

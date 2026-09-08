@@ -22,6 +22,9 @@ class RAGState(TypedDict, total=False):
     # Search-friendly standalone query
     rewritten_query: str
 
+    # previous Conversational history
+    history: list[Any]
+
     # Documents retrieved by the retrieval node
     documents: list[Any]
 
