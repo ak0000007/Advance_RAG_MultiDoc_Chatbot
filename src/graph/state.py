@@ -19,14 +19,20 @@ class RAGState(TypedDict, total=False):
     # Original user question
     question: str
 
-    # Search-friendly standalone query
-    rewritten_query: str
-
-    # previous Conversational history
+    # Conversation history used for follow-up questions
     history: list[Any]
 
-    # Documents retrieved by the retrieval node
+    # Query used for retrieval
+    rewritten_query: str
+
+    # Retrieved LangChain Documents
     documents: list[Any]
+
+    # Result of retrieval-quality evaluation
+    retrieval_relevant: bool
+
+    # Number of retrieval attempts
+    retrieval_attempts: int
 
     # Final generated answer
     answer: str
