@@ -1,8 +1,5 @@
 """
 State definition for the LangGraph RAG workflow.
-
-The state represents the information that travels through
-the graph as different nodes execute.
 """
 
 from typing import TypedDict, Any
@@ -11,32 +8,45 @@ from typing import TypedDict, Any
 class RAGState(TypedDict, total=False):
     """
     Shared state carried through the LangGraph RAG workflow.
-
-    Each node reads information from this state and returns
-    updates to one or more fields.
     """
 
-    # Original user question
+    # -----------------------------------------------------
+    # User input
+    # -----------------------------------------------------
+
     question: str
 
-    # Conversation history used for follow-up questions
+    # Conversation history
     history: list[Any]
 
-    # Query used for retrieval
+    # -----------------------------------------------------
+    # Query processing
+    # -----------------------------------------------------
+
     rewritten_query: str
 
-    # Retrieved LangChain Documents
+    # -----------------------------------------------------
+    # Retrieval
+    # -----------------------------------------------------
+
     documents: list[Any]
 
-    # Result of retrieval-quality evaluation
-    retrieval_relevant: bool
-
-    # Number of retrieval attempts
     retrieval_attempts: int
 
-    # Final generated answer
+    retrieval_relevant: bool
+
+    retrieval_grade_reason: str
+
+    # -----------------------------------------------------
+    # Generation
+    # -----------------------------------------------------
+
     answer: str
 
-    # Whether the generated answer is supported
-    # Whether the generated answer is supported
+    # -----------------------------------------------------
+    # Answer evaluation
+    # -----------------------------------------------------
+
     answer_supported: bool
+
+    answer_grade_reason: str

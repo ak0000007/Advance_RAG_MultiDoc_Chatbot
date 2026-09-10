@@ -5,24 +5,74 @@ Nodes are responsible for performing individual operations
 using the shared RAGState.
 """
 
+from pydantic import BaseModel, Field
+
 from src.graph.state import RAGState
 from src.rag.conversational import build_query_rewriter
+from src.rag.chain import format_docs
 
 from langchain_core.prompts import (
     ChatPromptTemplate,
     MessagesPlaceholder,
 )
 
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import (
+    StrOutputParser,
+    PydanticOutputParser,
+)
 
 from langchain_core.runnables import RunnableLambda
 
-from src.rag.chain import format_docs
+
+# =========================================================
+# Structured Output Schemas
+# =========================================================
 
 
-# ---------------------------------------------------------
+class RetrievalGrade(BaseModel):
+    """
+    Structured result produced by the retrieval grader.
+    """
+
+    relevant: bool = Field(
+        description=(
+            "Whether the retrieved documents contain "
+            "useful information for answering the question."
+        )
+    )
+
+    reason: str = Field(
+        description=(
+            "Brief explanation of why the retrieved "
+            "documents are or are not relevant."
+        )
+    )
+
+
+class AnswerGrade(BaseModel):
+    """
+    Structured result produced by the answer grader.
+    """
+
+    supported: bool = Field(
+        description=(
+            "Whether the generated answer is fully "
+            "supported by the retrieved documents."
+        )
+    )
+
+    reason: str = Field(
+        description=(
+            "Brief explanation of why the generated "
+            "answer is or is not supported by the context."
+        )
+    )
+
+
+# =========================================================
 # Question Router
-# ---------------------------------------------------------
+# =========================================================
+
 
 def route_question(state: RAGState) -> str:
     """
@@ -45,9 +95,10 @@ def route_question(state: RAGState) -> str:
     return "retrieve"
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Query Rewriter
-# ---------------------------------------------------------
+# =========================================================
+
 
 def create_query_rewriter_node(llm):
     """
@@ -107,14 +158,18 @@ STRICT RULES:
 11. Return exactly ONE search query.
                 """,
             ),
-            MessagesPlaceholder(variable_name="history"),
+            MessagesPlaceholder(
+                variable_name="history"
+            ),
             (
                 "human",
                 """
 Original question:
+
 {question}
 
 Previous retrieval query:
+
 {previous_query}
 
 Create a better retrieval query.
@@ -127,21 +182,29 @@ Create a better retrieval query.
         retry_prompt
         | llm
         | StrOutputParser()
-        | RunnableLambda(lambda text: text.strip())
+        | RunnableLambda(
+            lambda text: text.strip()
+        )
     )
 
     def query_rewriter_node(state: RAGState):
+
         question = state["question"]
-        history = state.get("history", [])
-        attempts = state.get("retrieval_attempts", 0)
+
+        history = state.get(
+            "history",
+            [],
+        )
+
+        attempts = state.get(
+            "retrieval_attempts",
+            0,
+        )
 
         # -------------------------------------------------
         # Corrective rewrite
         # -------------------------------------------------
-        #
-        # If retrieval has already been attempted, this
-        # means the previous retrieval was judged poor.
-        #
+
         if attempts > 0:
 
             previous_query = state.get(
@@ -179,9 +242,10 @@ Create a better retrieval query.
     return query_rewriter_node
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Retrieval Node
-# ---------------------------------------------------------
+# =========================================================
+
 
 def create_retrieval_node(retriever):
     """
@@ -222,24 +286,29 @@ def create_retrieval_node(retriever):
     return retrieval_node
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Retrieval Grader
-# ---------------------------------------------------------
+# =========================================================
+
 
 def create_retrieval_grader_node(llm):
     """
     Create an LLM-based retrieval relevance grader.
 
-    The grader receives:
+    Instead of returning raw YES / NO text, the grader
+    returns a validated RetrievalGrade Pydantic object.
 
-        question
-        +
-        retrieved documents
+    Example:
 
-    and returns:
-
-        retrieval_relevant = True / False
+        RetrievalGrade(
+            relevant=True,
+            reason="The documents discuss..."
+        )
     """
+
+    parser = PydanticOutputParser(
+        pydantic_object=RetrievalGrade
+    )
 
     grader_prompt = ChatPromptTemplate.from_messages(
         [
@@ -255,31 +324,31 @@ the user's question.
 
 IMPORTANT:
 
-- Judge the retrieved context, not the quality of the question.
+- Judge the retrieved context.
+- Do not answer the question yourself.
 - The documents do not need to contain the complete answer.
 - They must contain useful information that can help answer
   the question.
-- Do not answer the question yourself.
+- Do not use outside knowledge.
+- Do not invent information.
 
-Return EXACTLY one of:
+Return the required structured format.
 
-YES
-NO
-
-Do not provide explanations.
-Do not provide additional text.
+{format_instructions}
                 """,
             ),
             (
                 "human",
                 """
 Question:
+
 {question}
 
 Retrieved context:
+
 {context}
 
-Is the retrieved context relevant to the question?
+Determine whether the retrieved context is relevant.
                 """,
             ),
         ]
@@ -288,10 +357,7 @@ Is the retrieved context relevant to the question?
     grader_chain = (
         grader_prompt
         | llm
-        | StrOutputParser()
-        | RunnableLambda(
-            lambda text: text.strip().upper()
-        )
+        | parser
     )
 
     def retrieval_grader_node(state: RAGState):
@@ -303,44 +369,53 @@ Is the retrieved context relevant to the question?
             [],
         )
 
-        # If nothing was retrieved, retrieval is
-        # automatically considered unsuccessful.
+        # -------------------------------------------------
+        # No documents
+        # -------------------------------------------------
+
         if not documents:
+
             return {
-                "retrieval_relevant": False
+                "retrieval_relevant": False,
+                "retrieval_grade_reason": (
+                    "No documents were retrieved."
+                ),
             }
 
-        context = format_docs(documents)
+        # -------------------------------------------------
+        # Format retrieved documents
+        # -------------------------------------------------
 
-        result = grader_chain.invoke(
-            {
-                "question": question,
-                "context": context,
-            }
+        context = format_docs(
+            documents
         )
 
         # -------------------------------------------------
-        # Parse the model's YES / NO response.
-        #
-        # Fail closed:
-        # Anything other than YES is treated as NO.
+        # Structured grading
         # -------------------------------------------------
 
-        if result.startswith("YES"):
-            relevant = True
-        else:
-            relevant = False
+        grade = grader_chain.invoke(
+            {
+                "question": question,
+                "context": context,
+                "format_instructions": (
+                    parser.get_format_instructions()
+                ),
+            }
+        )
 
         return {
-            "retrieval_relevant": relevant
+            "retrieval_relevant": grade.relevant,
+            "retrieval_grade_reason": grade.reason,
         }
 
     return retrieval_grader_node
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Retrieval Decision Router
-# ---------------------------------------------------------
+# =========================================================
+
 
 MAX_RETRIEVAL_ATTEMPTS = 2
 
@@ -378,9 +453,10 @@ def route_after_grading(state: RAGState) -> str:
     return "fallback"
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Generation Node
-# ---------------------------------------------------------
+# =========================================================
+
 
 def create_generation_node(generation_chain):
     """
@@ -416,25 +492,28 @@ def create_generation_node(generation_chain):
 
     return generation_node
 
-# ---------------------------------------------------------
+
+# =========================================================
 # Answer Grader
-# ---------------------------------------------------------
+# =========================================================
+
 
 def create_answer_grader_node(llm):
     """
     Evaluate whether the generated answer is supported
     by the retrieved context.
 
-    Inputs:
+    Instead of raw YES / NO text, the grader returns:
 
-        question
-        documents
-        answer
-
-    Output:
-
-        answer_supported = True / False
+        AnswerGrade(
+            supported=True/False,
+            reason="..."
+        )
     """
+
+    parser = PydanticOutputParser(
+        pydantic_object=AnswerGrade
+    )
 
     grader_prompt = ChatPromptTemplate.from_messages(
         [
@@ -463,34 +542,37 @@ IMPORTANT RULES:
 4. Reasonable summarization or paraphrasing is allowed.
 
 5. If the answer contains claims that are not supported
-   by the context, return NO.
+   by the context, return supported=false.
 
 6. If the context does not provide enough information
-   to support the answer, return NO.
+   to support the answer, return supported=false.
 
-Return EXACTLY one of:
+7. Do not rewrite the answer.
 
-YES
-NO
+8. Do not answer the original question.
 
-Do not provide explanations.
-Do not provide additional text.
+Return the required structured format.
+
+{format_instructions}
                 """,
             ),
             (
                 "human",
                 """
 Question:
+
 {question}
 
 Retrieved context:
+
 {context}
 
 Generated answer:
+
 {answer}
 
-Is the generated answer fully supported by the
-retrieved context?
+Determine whether the generated answer is fully
+supported by the retrieved context.
                 """,
             ),
         ]
@@ -499,10 +581,7 @@ retrieved context?
     grader_chain = (
         grader_prompt
         | llm
-        | StrOutputParser()
-        | RunnableLambda(
-            lambda text: text.strip().upper()
-        )
+        | parser
     )
 
     def answer_grader_node(state: RAGState):
@@ -519,35 +598,54 @@ retrieved context?
             "",
         )
 
-        # No answer means it cannot be considered
-        # successfully supported.
+        # -------------------------------------------------
+        # No answer
+        # -------------------------------------------------
+
         if not answer:
+
             return {
-                "answer_supported": False
+                "answer_supported": False,
+                "answer_grade_reason": (
+                    "No answer was generated."
+                ),
             }
 
-        context = format_docs(documents)
+        # -------------------------------------------------
+        # Format context
+        # -------------------------------------------------
 
-        result = grader_chain.invoke(
+        context = format_docs(
+            documents
+        )
+
+        # -------------------------------------------------
+        # Structured grading
+        # -------------------------------------------------
+
+        grade = grader_chain.invoke(
             {
                 "question": question,
                 "context": context,
                 "answer": answer,
+                "format_instructions": (
+                    parser.get_format_instructions()
+                ),
             }
         )
 
-        supported = result.startswith("YES")
-
         return {
-            "answer_supported": supported
+            "answer_supported": grade.supported,
+            "answer_grade_reason": grade.reason,
         }
 
     return answer_grader_node
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Safe Fallback Node
-# ---------------------------------------------------------
+# =========================================================
+
 
 def create_fallback_node():
     """
