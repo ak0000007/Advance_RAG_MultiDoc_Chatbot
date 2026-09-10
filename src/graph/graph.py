@@ -16,15 +16,17 @@ Question Router
                            /             \
                        GOOD              BAD
                         ↓                 ↓
-                    Generate       Retry available?
-                        ↓             /        \
-                       END          YES        NO
-                                    ↓           ↓
-                                 Rewrite     Fallback
-                                    ↓           ↓
-                                Retrieval      END
-                                    ↓
-                                  Grade
+                    Generate          Rewrite
+                        ↓                 ↑
+                  Answer Grader           │
+                        ↓                 │
+                       END            Retrieve
+                                         ↓
+                                       Grade
+                                         ↓
+                                      Fallback
+                                         ↓
+                                        END
 """
 
 from langgraph.graph import (
@@ -40,6 +42,7 @@ from src.graph.nodes import (
     create_retrieval_node,
     create_retrieval_grader_node,
     create_generation_node,
+    create_answer_grader_node,
     create_fallback_node,
     route_question,
     route_after_grading,
@@ -52,16 +55,8 @@ def build_rag_graph(
     generation_chain,
 ):
     """
-    Build the corrective RAG LangGraph workflow.
-
-    Components are injected into the graph rather than
-    created inside the graph itself.
-
-    This keeps the graph loosely coupled to:
-
-        - LLM
-        - Retriever
-        - Generation chain
+    Build the corrective RAG workflow with
+    answer-quality evaluation.
     """
 
     graph_builder = StateGraph(RAGState)
@@ -84,6 +79,10 @@ def build_rag_graph(
 
     generation_node = create_generation_node(
         generation_chain
+    )
+
+    answer_grader_node = create_answer_grader_node(
+        llm
     )
 
     fallback_node = create_fallback_node()
@@ -113,12 +112,17 @@ def build_rag_graph(
     )
 
     graph_builder.add_node(
+        "grade_answer",
+        answer_grader_node,
+    )
+
+    graph_builder.add_node(
         "fallback",
         fallback_node,
     )
 
     # -----------------------------------------------------
-    # START → Router
+    # START → Question Router
     # -----------------------------------------------------
 
     graph_builder.add_conditional_edges(
@@ -140,7 +144,7 @@ def build_rag_graph(
     )
 
     # -----------------------------------------------------
-    # Retrieve → Grade
+    # Retrieve → Retrieval Grader
     # -----------------------------------------------------
 
     graph_builder.add_edge(
@@ -149,7 +153,7 @@ def build_rag_graph(
     )
 
     # -----------------------------------------------------
-    # Grade → Generate / Rewrite / Fallback
+    # Retrieval Grader → Decision
     # -----------------------------------------------------
 
     graph_builder.add_conditional_edges(
@@ -163,11 +167,20 @@ def build_rag_graph(
     )
 
     # -----------------------------------------------------
-    # End states
+    # Generate → Answer Grader
     # -----------------------------------------------------
 
     graph_builder.add_edge(
         "generate",
+        "grade_answer",
+    )
+
+    # -----------------------------------------------------
+    # Terminal edges
+    # -----------------------------------------------------
+
+    graph_builder.add_edge(
+        "grade_answer",
         END,
     )
 

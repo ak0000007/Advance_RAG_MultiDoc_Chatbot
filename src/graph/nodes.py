@@ -416,6 +416,134 @@ def create_generation_node(generation_chain):
 
     return generation_node
 
+# ---------------------------------------------------------
+# Answer Grader
+# ---------------------------------------------------------
+
+def create_answer_grader_node(llm):
+    """
+    Evaluate whether the generated answer is supported
+    by the retrieved context.
+
+    Inputs:
+
+        question
+        documents
+        answer
+
+    Output:
+
+        answer_supported = True / False
+    """
+
+    grader_prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """
+You are an answer quality evaluator inside a
+Retrieval-Augmented Generation system.
+
+Your task is to determine whether the generated answer
+is supported by the provided retrieved context.
+
+A supported answer must be grounded in information
+contained in the context.
+
+IMPORTANT RULES:
+
+1. Do not use outside knowledge.
+
+2. Judge only whether the answer is supported by
+   the provided context.
+
+3. The answer does not need to use the exact wording
+   of the context.
+
+4. Reasonable summarization or paraphrasing is allowed.
+
+5. If the answer contains claims that are not supported
+   by the context, return NO.
+
+6. If the context does not provide enough information
+   to support the answer, return NO.
+
+Return EXACTLY one of:
+
+YES
+NO
+
+Do not provide explanations.
+Do not provide additional text.
+                """,
+            ),
+            (
+                "human",
+                """
+Question:
+{question}
+
+Retrieved context:
+{context}
+
+Generated answer:
+{answer}
+
+Is the generated answer fully supported by the
+retrieved context?
+                """,
+            ),
+        ]
+    )
+
+    grader_chain = (
+        grader_prompt
+        | llm
+        | StrOutputParser()
+        | RunnableLambda(
+            lambda text: text.strip().upper()
+        )
+    )
+
+    def answer_grader_node(state: RAGState):
+
+        question = state["question"]
+
+        documents = state.get(
+            "documents",
+            [],
+        )
+
+        answer = state.get(
+            "answer",
+            "",
+        )
+
+        # No answer means it cannot be considered
+        # successfully supported.
+        if not answer:
+            return {
+                "answer_supported": False
+            }
+
+        context = format_docs(documents)
+
+        result = grader_chain.invoke(
+            {
+                "question": question,
+                "context": context,
+                "answer": answer,
+            }
+        )
+
+        supported = result.startswith("YES")
+
+        return {
+            "answer_supported": supported
+        }
+
+    return answer_grader_node
+
 
 # ---------------------------------------------------------
 # Safe Fallback Node

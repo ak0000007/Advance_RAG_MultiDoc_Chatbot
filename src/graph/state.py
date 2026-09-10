@@ -36,3 +36,7 @@ class RAGState(TypedDict, total=False):
 
     # Final generated answer
     answer: str
+
+    # Whether the generated answer is supported
+    # Whether the generated answer is supported
+    answer_supported: bool
