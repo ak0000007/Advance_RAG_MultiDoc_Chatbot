@@ -1,25 +1,28 @@
 """
-LangGraph tool-calling workflow.
+LangGraph tool-calling agent.
 
-This module teaches and implements the basic pattern:
+Architecture:
 
-    Model
+    Agent
       ↓
-    tool_calls?
+    Tool requested?
       ↓
     ToolNode
       ↓
-    tool result
+    Tool result
       ↓
-    Model
+    Agent
       ↓
-    final answer
+    ...
+      ↓
+    Final answer / bounded stop
 
-The tool used here is backed by the project's
-real document retrieval system.
+The agent uses the project's real document
+retrieval tool.
+
+The number of agent iterations is explicitly
+bounded to prevent uncontrolled tool execution.
 """
-
-from langchain_core.messages import HumanMessage
 
 from langgraph.graph import (
     StateGraph,
@@ -30,7 +33,6 @@ from langgraph.graph import (
 
 from langgraph.prebuilt import (
     ToolNode,
-    tools_condition,
 )
 
 from src.tools.document_search import (
@@ -38,32 +40,74 @@ from src.tools.document_search import (
 )
 
 
+# =========================================================
+# Agent Configuration
+# =========================================================
+
+MAX_AGENT_STEPS = 5
+
+
+# =========================================================
+# Agent State
+# =========================================================
+
+
+class AgentState(MessagesState):
+    """
+    State used by the tool-calling agent.
+
+    MessagesState already provides:
+
+        messages
+
+    We additionally track:
+
+        agent_steps
+
+    This allows the application to enforce a maximum
+    number of agent/tool iterations.
+    """
+
+    agent_steps: int
+
+
+# =========================================================
+# Agent Graph
+# =========================================================
+
+
 def build_tool_execution_graph(
     chat_model,
     retriever,
 ):
     """
-    Build a LangGraph tool execution workflow.
+    Build the bounded LangGraph tool-calling agent.
 
-    The model can decide whether it needs to call
-    search_documents.
+    Flow:
 
-    ToolNode executes the tool.
-
-    The result is returned to the model.
-
-    The model can then produce the final answer
-    or request another tool call.
+        START
+          ↓
+        agent
+          ↓
+        tool requested?
+         /        \
+       no          yes
+       ↓            ↓
+      END      steps < MAX?
+                    /   \
+                  yes    no
+                   ↓      ↓
+                 tools  fallback
+                   ↓
+                 agent
     """
 
     # =====================================================
-    # 1. Create real project tool
+    # 1. Create project tool
     # =====================================================
 
-    document_search = (
-        build_document_search_tool(
-            retriever
-        )
+    document_search = build_document_search_tool(
+        retriever
     )
 
     tools = [
@@ -74,14 +118,12 @@ def build_tool_execution_graph(
     # 2. Bind tools to model
     # =====================================================
 
-    model_with_tools = (
-        chat_model.bind_tools(
-            tools
-        )
+    model_with_tools = chat_model.bind_tools(
+        tools
     )
 
     # =====================================================
-    # 3. Create LangGraph ToolNode
+    # 3. ToolNode
     # =====================================================
 
     tool_node = ToolNode(
@@ -89,31 +131,109 @@ def build_tool_execution_graph(
     )
 
     # =====================================================
-    # 4. Model node
+    # 4. Agent node
     # =====================================================
 
-    def call_model(
-        state: MessagesState,
-    ):
+    def call_model(state: AgentState):
 
-        response = (
-            model_with_tools.invoke(
-                state["messages"]
-            )
+        response = model_with_tools.invoke(
+            state["messages"]
+        )
+
+        current_steps = state.get(
+            "agent_steps",
+            0,
         )
 
         return {
             "messages": [
                 response
+            ],
+            "agent_steps": current_steps + 1,
+        }
+
+    # =====================================================
+    # 5. Routing after agent
+    # =====================================================
+
+    def route_after_agent(
+        state: AgentState,
+    ):
+        """
+        Decide whether the agent should:
+
+        1. Finish
+        2. Execute a tool
+        3. Stop because the maximum number of
+           agent steps has been reached.
+        """
+
+        messages = state.get(
+            "messages",
+            [],
+        )
+
+        if not messages:
+            return "end"
+
+        last_message = messages[-1]
+
+        # -------------------------------------------------
+        # No tool call → final answer
+        # -------------------------------------------------
+
+        if not getattr(
+            last_message,
+            "tool_calls",
+            None,
+        ):
+            return "end"
+
+        # -------------------------------------------------
+        # Tool call exists
+        # -------------------------------------------------
+
+        steps = state.get(
+            "agent_steps",
+            0,
+        )
+
+        if steps >= MAX_AGENT_STEPS:
+            return "max_steps"
+
+        return "tools"
+
+    # =====================================================
+    # 6. Maximum-step fallback
+    # =====================================================
+
+    def max_steps_node(
+        state: AgentState,
+    ):
+        """
+        Safely terminate the agent when it reaches
+        the maximum allowed number of model decisions.
+        """
+
+        return {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "I couldn't complete the request "
+                        "within the allowed number of "
+                        "agent steps."
+                    ),
+                }
             ]
         }
 
     # =====================================================
-    # 5. Create graph
+    # 7. Graph
     # =====================================================
 
     graph_builder = StateGraph(
-        MessagesState
+        AgentState
     )
 
     # -----------------------------------------------------
@@ -130,6 +250,11 @@ def build_tool_execution_graph(
         tool_node,
     )
 
+    graph_builder.add_node(
+        "max_steps",
+        max_steps_node,
+    )
+
     # -----------------------------------------------------
     # START → agent
     # -----------------------------------------------------
@@ -140,25 +265,30 @@ def build_tool_execution_graph(
     )
 
     # -----------------------------------------------------
-    # agent → tools OR END
-    #
-    # tools_condition checks whether the AIMessage
-    # contains tool_calls.
+    # agent → decision
     # -----------------------------------------------------
 
     graph_builder.add_conditional_edges(
         "agent",
-        tools_condition,
+        route_after_agent,
         {
             "tools": "tools",
-            END: END,
+            "end": END,
+            "max_steps": "max_steps",
         },
     )
 
     # -----------------------------------------------------
+    # max_steps → END
+    # -----------------------------------------------------
+
+    graph_builder.add_edge(
+        "max_steps",
+        END,
+    )
+
+    # -----------------------------------------------------
     # tools → agent
-    #
-    # This creates the tool execution loop.
     # -----------------------------------------------------
 
     graph_builder.add_edge(
@@ -167,7 +297,7 @@ def build_tool_execution_graph(
     )
 
     # =====================================================
-    # 6. Compile
+    # 8. Compile
     # =====================================================
 
     return graph_builder.compile()
