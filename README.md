@@ -47,11 +47,11 @@ Even if you aren't a programmer, here is the journey of your documents and your 
 * **What it does:** Reads PDFs, Word files, Excels, CSVs, and Text files. It chops them into small, overlapping "chunks" (paragraphs). 
 * **Why:** The AI can't read a 500-page book in one go. Chunks make the text bite-sized and digestible.
 
-### 2. Embeddings & Vector Store (BGE-M3 & Qdrant)
+### 2. Embeddings & Vector Store (BGE-M3 & Qdrant/You can choose yours)
 * **What it does:** Translates human text into numbers (vectors) and stores them in a database.
 * **Why:** This allows the system to search by *concept and meaning*, not just exact words.
 
-### 3. The Brain (Qwen3-4B-Instruct)
+### 3. The Brain (Qwen3-4B-Instruct/You can choose yours)
 * **What it does:** A highly efficient, open-source AI model that reads the retrieved paragraphs and writes the final answer for you.
 * **Why:** We run this in "4-bit quantization", which is a clever math trick that allows a powerful AI to run on a standard, affordable graphics card (GPU) without losing its smarts.
 
