@@ -118,4 +118,4 @@ We have provided a complete test suite that sets everything up automatically.
 
 ## 📜 License
 
-This project is open-source and available under standard MIT guidelines. Feel free to fork, modify, and use it for your own data!
+This project is open-source and currently  under Development. Feel free to fork, modify, and use it for your own data!
