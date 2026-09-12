@@ -65,7 +65,7 @@ Even if you aren't a programmer, here is the journey of your documents and your 
 
 ### Prerequisites
 - Python 3.9+
-- A GPU (NVIDIA T4 or better is recommended for the AI model)
+- A GPU (T4 or better is recommended for the AI model)
 
 ### Installation
 
