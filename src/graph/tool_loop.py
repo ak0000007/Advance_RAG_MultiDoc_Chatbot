@@ -1,27 +1,24 @@
 """
-LangGraph tool-calling agent.
+LangGraph tool-calling agent with conversation memory.
 
 Architecture:
 
-    Agent
-      ↓
+    User Message
+         ↓
+    Agent / Model
+         ↓
     Tool requested?
-      ↓
-    ToolNode
-      ↓
-    Tool result
-      ↓
-    Agent
-      ↓
-    ...
-      ↓
-    Final answer / bounded stop
+       /       \
+     NO         YES
+     ↓           ↓
+    END        ToolNode
+                 ↓
+               Agent
+                 ↓
+                ...
 
-The agent uses the project's real document
-retrieval tool.
-
-The number of agent iterations is explicitly
-bounded to prevent uncontrolled tool execution.
+Conversation state is persisted by an
+InMemorySaver checkpointer using thread_id.
 """
 
 from langgraph.graph import (
@@ -33,6 +30,11 @@ from langgraph.graph import (
 
 from langgraph.prebuilt import (
     ToolNode,
+    tools_condition,
+)
+
+from langgraph.checkpoint.memory import (
+    InMemorySaver,
 )
 
 from src.tools.document_search import (
@@ -40,74 +42,30 @@ from src.tools.document_search import (
 )
 
 
-# =========================================================
-# Agent Configuration
-# =========================================================
-
-MAX_AGENT_STEPS = 5
-
-
-# =========================================================
-# Agent State
-# =========================================================
-
-
-class AgentState(MessagesState):
-    """
-    State used by the tool-calling agent.
-
-    MessagesState already provides:
-
-        messages
-
-    We additionally track:
-
-        agent_steps
-
-    This allows the application to enforce a maximum
-    number of agent/tool iterations.
-    """
-
-    agent_steps: int
-
-
-# =========================================================
-# Agent Graph
-# =========================================================
-
-
 def build_tool_execution_graph(
     chat_model,
     retriever,
 ):
     """
-    Build the bounded LangGraph tool-calling agent.
+    Build the LangGraph tool-calling agent.
 
-    Flow:
+    The graph supports:
 
-        START
-          ↓
-        agent
-          ↓
-        tool requested?
-         /        \
-       no          yes
-       ↓            ↓
-      END      steps < MAX?
-                    /   \
-                  yes    no
-                   ↓      ↓
-                 tools  fallback
-                   ↓
-                 agent
+    1. LLM tool selection
+    2. Tool execution
+    3. Tool result → LLM loop
+    4. Conversation persistence through
+       an InMemorySaver checkpointer
     """
 
     # =====================================================
-    # 1. Create project tool
+    # 1. Create project retrieval tool
     # =====================================================
 
-    document_search = build_document_search_tool(
-        retriever
+    document_search = (
+        build_document_search_tool(
+            retriever
+        )
     )
 
     tools = [
@@ -118,12 +76,14 @@ def build_tool_execution_graph(
     # 2. Bind tools to model
     # =====================================================
 
-    model_with_tools = chat_model.bind_tools(
-        tools
+    model_with_tools = (
+        chat_model.bind_tools(
+            tools
+        )
     )
 
     # =====================================================
-    # 3. ToolNode
+    # 3. Create ToolNode
     # =====================================================
 
     tool_node = ToolNode(
@@ -131,114 +91,36 @@ def build_tool_execution_graph(
     )
 
     # =====================================================
-    # 4. Agent node
+    # 4. Model / Agent node
     # =====================================================
 
-    def call_model(state: AgentState):
+    def call_model(
+        state: MessagesState,
+    ):
 
-        response = model_with_tools.invoke(
-            state["messages"]
-        )
-
-        current_steps = state.get(
-            "agent_steps",
-            0,
+        response = (
+            model_with_tools.invoke(
+                state["messages"]
+            )
         )
 
         return {
             "messages": [
                 response
-            ],
-            "agent_steps": current_steps + 1,
-        }
-
-    # =====================================================
-    # 5. Routing after agent
-    # =====================================================
-
-    def route_after_agent(
-        state: AgentState,
-    ):
-        """
-        Decide whether the agent should:
-
-        1. Finish
-        2. Execute a tool
-        3. Stop because the maximum number of
-           agent steps has been reached.
-        """
-
-        messages = state.get(
-            "messages",
-            [],
-        )
-
-        if not messages:
-            return "end"
-
-        last_message = messages[-1]
-
-        # -------------------------------------------------
-        # No tool call → final answer
-        # -------------------------------------------------
-
-        if not getattr(
-            last_message,
-            "tool_calls",
-            None,
-        ):
-            return "end"
-
-        # -------------------------------------------------
-        # Tool call exists
-        # -------------------------------------------------
-
-        steps = state.get(
-            "agent_steps",
-            0,
-        )
-
-        if steps >= MAX_AGENT_STEPS:
-            return "max_steps"
-
-        return "tools"
-
-    # =====================================================
-    # 6. Maximum-step fallback
-    # =====================================================
-
-    def max_steps_node(
-        state: AgentState,
-    ):
-        """
-        Safely terminate the agent when it reaches
-        the maximum allowed number of model decisions.
-        """
-
-        return {
-            "messages": [
-                {
-                    "role": "assistant",
-                    "content": (
-                        "I couldn't complete the request "
-                        "within the allowed number of "
-                        "agent steps."
-                    ),
-                }
             ]
         }
 
     # =====================================================
-    # 7. Graph
+    # 5. Create graph
     # =====================================================
 
     graph_builder = StateGraph(
-        AgentState
+        MessagesState
     )
 
-    # -----------------------------------------------------
-    # Nodes
-    # -----------------------------------------------------
+    # =====================================================
+    # 6. Add nodes
+    # =====================================================
 
     graph_builder.add_node(
         "agent",
@@ -250,46 +132,31 @@ def build_tool_execution_graph(
         tool_node,
     )
 
-    graph_builder.add_node(
-        "max_steps",
-        max_steps_node,
-    )
-
-    # -----------------------------------------------------
-    # START → agent
-    # -----------------------------------------------------
+    # =====================================================
+    # 7. START → Agent
+    # =====================================================
 
     graph_builder.add_edge(
         START,
         "agent",
     )
 
-    # -----------------------------------------------------
-    # agent → decision
-    # -----------------------------------------------------
+    # =====================================================
+    # 8. Agent → Tool OR END
+    # =====================================================
 
     graph_builder.add_conditional_edges(
         "agent",
-        route_after_agent,
+        tools_condition,
         {
             "tools": "tools",
-            "end": END,
-            "max_steps": "max_steps",
+            END: END,
         },
     )
 
-    # -----------------------------------------------------
-    # max_steps → END
-    # -----------------------------------------------------
-
-    graph_builder.add_edge(
-        "max_steps",
-        END,
-    )
-
-    # -----------------------------------------------------
-    # tools → agent
-    # -----------------------------------------------------
+    # =====================================================
+    # 9. Tool → Agent
+    # =====================================================
 
     graph_builder.add_edge(
         "tools",
@@ -297,7 +164,15 @@ def build_tool_execution_graph(
     )
 
     # =====================================================
-    # 8. Compile
+    # 10. Create in-memory checkpointer
     # =====================================================
 
-    return graph_builder.compile()
+    checkpointer = InMemorySaver()
+
+    # =====================================================
+    # 11. Compile graph with checkpointer
+    # =====================================================
+
+    return graph_builder.compile(
+        checkpointer=checkpointer
+    )
