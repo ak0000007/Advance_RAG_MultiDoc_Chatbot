@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
-from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
-
-load_dotenv()
+from src.config import settings
 
 
 # =========================================================
@@ -183,7 +180,7 @@ def _create_deepseek(
 
     deepseek_api_key = (
         api_key
-        or os.getenv("DEEPSEEK_API_KEY")
+        or settings.deepseek_api_key
     )
 
     if not deepseek_api_key:
@@ -231,7 +228,7 @@ def _create_openai(
 
     openai_api_key = (
         api_key
-        or os.getenv("OPENAI_API_KEY")
+        or settings.openai_api_key
     )
 
     if not openai_api_key:

@@ -10,7 +10,8 @@ existing stores — OCP satisfied.
 """
 
 from langchain_core.documents import Document
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import RunnableLambda 
+import hashlib
 
 
 def reciprocal_rank_fusion(
@@ -30,7 +31,7 @@ def reciprocal_rank_fusion(
         for rank, doc in enumerate(ranked_docs):
             # Use page_content hash as dedup key since
             # docs from different sources won't share IDs.
-            doc_key = str(hash(doc.page_content))
+            doc_key = hashlib.md5(doc.page_content.encode()).hexdigest()
 
             if doc_key not in doc_map:
                 doc_map[doc_key] = doc
