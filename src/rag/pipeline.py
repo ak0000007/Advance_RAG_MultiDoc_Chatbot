@@ -2,6 +2,7 @@ from typing import Optional, List, Any, Iterator
 from src.retrieval.hybrid_retriever import HybridRetriever
 from src.reranking.reranker import CrossEncoderReranker
 from src.rag.chain import build_rag_chain
+from src.config import settings
 
 
 class RAGPipeline:
@@ -15,7 +16,7 @@ class RAGPipeline:
         qdrant_retriever=None,
         bm25_retriever=None,
         llm=None,
-        reranker_model_name="BAAI/bge-reranker-v2-m3",
+        reranker_model_name: Optional[str] = None,
         retrieval_k: int = 20,
         final_k: int = 5,
         retrievers: Optional[List[Any]] = None,
@@ -30,8 +31,13 @@ class RAGPipeline:
             # Fallback to legacy arguments
             retrievers = [r for r in [qdrant_retriever, bm25_retriever] if r is not None]
 
-        if reranker is None and reranker_model_name:
-            reranker = CrossEncoderReranker(model_name=reranker_model_name)
+        if not retrievers:
+            raise ValueError("At least one retriever must be provided.")
+
+        if reranker is None:
+            model_name = reranker_model_name or settings.reranker_model_name
+            if model_name:
+                reranker = CrossEncoderReranker(model_name=model_name)
 
         # --------------------------------------------------
         # 2. Hybrid Retrieval
@@ -76,7 +82,3 @@ class RAGPipeline:
     def stream(self, question: str, metadata_filter: Optional[dict] = None, config: Optional[dict] = None) -> Iterator[str]:
         """Token streaming for UI/chatbots."""
         return self.chain.stream({"question": question, "metadata_filter": metadata_filter}, config=config)
-
-    def get_chain(self):
-        """Return the underlying LCEL RAG chain."""
-        return self.chain
