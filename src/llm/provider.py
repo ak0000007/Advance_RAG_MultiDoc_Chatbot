@@ -4,6 +4,12 @@ from importlib import import_module
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
+import os
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
