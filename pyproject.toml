@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "advance-rag-multidoc-chatbot"
+version = "0.1.0"
+description = "Advanced RAG Multi-Document Chatbot"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+    "openpyxl",
+    "python-docx",
+    "pypdf",
+    "pymupdf",
+    "langchain-text-splitters",
+    "sentence-transformers",
+    "huggingface_hub",
+    "numpy",
+    "langchain",
+    "langchain_classic",
+    "langchain-qdrant",
+    "qdrant-client",
+    "langchain-community",
+    "langchain-huggingface",
+    "langchain-core",
+    "unstructured",
+    "bitsandbytes>=0.46.1",
+    "accelerate",
+    "langsmith",
+    "langchain-google-genai"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pip-tools"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
