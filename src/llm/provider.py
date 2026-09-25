@@ -10,7 +10,7 @@ from src.config import settings
 # Default configuration
 # =========================================================
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 
 DEFAULT_DEEPSEEK_MODEL = "deepseek-flash"
 
@@ -282,6 +282,45 @@ def _create_local(
 
 from langchain_core.runnables import Runnable
 
+
+class _FallbackAwareModel(Runnable):
+    """
+    A proxy that ensures chain modifications like with_structured_output
+    are applied to BOTH the primary and fallback models, before 
+    re-applying the fallback routing logic.
+    """
+    def __init__(self, primary, fallback):
+        self.primary = primary
+        self.fallback = fallback
+        self.runnable = primary.with_fallbacks(
+            [fallback], 
+            exceptions_to_handle=(ModelRateLimitError,)
+        )
+
+    def invoke(self, *args, **kwargs):
+        return self.runnable.invoke(*args, **kwargs)
+
+    async def ainvoke(self, *args, **kwargs):
+        return await self.runnable.ainvoke(*args, **kwargs)
+        
+    def stream(self, *args, **kwargs):
+        return self.runnable.stream(*args, **kwargs)
+
+    def bind_tools(self, *args, **kwargs):
+        return self.primary.bind_tools(*args, **kwargs).with_fallbacks(
+            [self.fallback.bind_tools(*args, **kwargs)],
+            exceptions_to_handle=(ModelRateLimitError,)
+        )
+
+    def with_structured_output(self, *args, **kwargs):
+        return self.primary.with_structured_output(*args, **kwargs).with_fallbacks(
+            [self.fallback.with_structured_output(*args, **kwargs)],
+            exceptions_to_handle=(ModelRateLimitError,)
+        )
+        
+    def __getattr__(self, name):
+        return getattr(self.runnable, name)
+
 class _RateLimitAwareModel(Runnable):
     """
     Thin proxy around a LangChain ChatModel.
@@ -309,6 +348,11 @@ class _RateLimitAwareModel(Runnable):
     def bind_tools(self, *args: Any, **kwargs: Any) -> Runnable:
         bound = self._model.bind_tools(*args, **kwargs)
         return _RateLimitAwareModel(bound)
+
+    def with_structured_output(self, *args, **kwargs):
+        bound = self._model.with_structured_output(*args, **kwargs)
+        return _RateLimitAwareModel(bound)
+
 
     def invoke(
         self,
@@ -379,7 +423,7 @@ def _create_single_llm(
     if provider == "openai":
 
         return _create_openai(
-            model=model or "gpt-4o-mini",
+            model=model or "gpt-4o-mini", ## use gpt-4.1-nano  for simple tasks and gpt-4.1-mini for more Agentic task tasks
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -412,7 +456,7 @@ def create_llm(
     api_key: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 300,
-    fallback_provider: str | None = "deepseek",
+    fallback_provider: str | None = "openai",
     fallback_model: str | None = None,
     fallback_api_key: str | None = None,
     **kwargs: Any,
@@ -453,9 +497,4 @@ def create_llm(
         **kwargs,
     )
 
-    return primary_llm.with_fallbacks(
-        [fallback_llm],
-        exceptions_to_handle=(
-            ModelRateLimitError,
-        ),
-    )
+    return _FallbackAwareModel(primary=primary_llm, fallback=fallback_llm)
