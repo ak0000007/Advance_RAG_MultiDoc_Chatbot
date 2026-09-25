@@ -132,8 +132,13 @@ def _create_gemini(
         "max_tokens": max_tokens,
     }
 
-    if api_key:
-        gemini_kwargs["google_api_key"] = api_key
+    google_api_key = (
+        api_key
+        or settings.google_api_key
+    )
+
+    if google_api_key:
+        gemini_kwargs["google_api_key"] = google_api_key
 
     gemini_kwargs.update(kwargs)
 
@@ -275,7 +280,9 @@ def _create_local(
 # =========================================================
 
 
-class _RateLimitAwareModel:
+from langchain_core.runnables import Runnable
+
+class _RateLimitAwareModel(Runnable):
     """
     Thin proxy around a LangChain ChatModel.
 
@@ -289,7 +296,7 @@ class _RateLimitAwareModel:
 
     def __init__(
         self,
-        model: BaseChatModel,
+        model: BaseChatModel | Runnable,
     ):
         self._model = model
 
@@ -298,6 +305,10 @@ class _RateLimitAwareModel:
             self._model,
             name,
         )
+
+    def bind_tools(self, *args: Any, **kwargs: Any) -> Runnable:
+        bound = self._model.bind_tools(*args, **kwargs)
+        return _RateLimitAwareModel(bound)
 
     def invoke(
         self,
