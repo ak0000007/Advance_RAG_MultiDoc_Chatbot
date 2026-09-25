@@ -44,6 +44,7 @@ from src.graph.nodes import (
     create_generation_node,
     create_answer_grader_node,
     create_fallback_node,
+    create_retrieval_confidence_router,
     route_question,
     route_after_grading,
 )
@@ -53,10 +54,16 @@ def build_rag_graph(
     llm,
     retriever,
     generation_chain,
+    score_threshold: float = 0.7,
+    min_confident_docs: int = 3,
 ):
     """
     Build the corrective RAG workflow with
     answer-quality evaluation.
+
+    score_threshold / min_confident_docs control when the
+    LLM retrieval grader is skipped. Set score_threshold=1.0
+    to always grade (original behavior).
     """
 
     graph_builder = StateGraph(RAGState)
@@ -144,12 +151,28 @@ def build_rag_graph(
     )
 
     # -----------------------------------------------------
-    # Retrieve → Retrieval Grader
+    # Retrieve → Confidence Check
+    #
+    # High reranker score + enough docs → skip grader
+    # Low score or few docs → grade with LLM
+    # No docs → fallback
     # -----------------------------------------------------
 
-    graph_builder.add_edge(
+    retrieval_confidence_router = (
+        create_retrieval_confidence_router(
+            score_threshold=score_threshold,
+            min_docs=min_confident_docs,
+        )
+    )
+
+    graph_builder.add_conditional_edges(
         "retrieve",
-        "grade_retrieval",
+        retrieval_confidence_router,
+        {
+            "generate": "generate",
+            "grade_retrieval": "grade_retrieval",
+            "fallback": "fallback",
+        },
     )
 
     # -----------------------------------------------------

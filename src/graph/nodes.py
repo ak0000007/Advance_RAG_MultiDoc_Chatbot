@@ -96,6 +96,61 @@ def route_question(state: RAGState) -> str:
 
 
 # =========================================================
+# Retrieval Confidence Router
+# =========================================================
+
+
+def create_retrieval_confidence_router(
+    score_threshold: float = 0.7,
+    min_docs: int = 3,
+):
+    """
+    Factory that returns a routing function to conditionally
+    skip the LLM-based retrieval grader.
+
+    Decision logic:
+
+        No documents retrieved
+            → fallback (no point grading nothing)
+
+        Top reranker score >= threshold AND doc count >= min_docs
+            → generate (high confidence, skip grader)
+
+        Otherwise
+            → grade_retrieval (uncertain, let LLM judge)
+
+    Parameters are configurable via settings or .env:
+
+        RETRIEVAL_CONFIDENCE_THRESHOLD=0.7
+        RETRIEVAL_MIN_CONFIDENT_DOCS=3
+
+    To disable this optimization entirely, set threshold=1.0.
+    All requests will then flow through the grader as before.
+    """
+
+    def route_retrieval_confidence(state: RAGState) -> str:
+
+        documents = state.get("documents", [])
+
+        if not documents:
+            return "fallback"
+
+        top_score = documents[0].metadata.get(
+            "rerank_score", 0.0,
+        )
+
+        if (
+            top_score >= score_threshold
+            and len(documents) >= min_docs
+        ):
+            return "generate"
+
+        return "grade_retrieval"
+
+    return route_retrieval_confidence
+
+
+# =========================================================
 # Query Rewriter
 # =========================================================
 
@@ -354,10 +409,10 @@ Determine whether the retrieved context is relevant.
         ]
     )
 
+    structured_llm = llm.with_structured_output(RetrievalGrade)
     grader_chain = (
         grader_prompt
-        | llm
-        | parser
+        | structured_llm
     )
 
     def retrieval_grader_node(state: RAGState):
@@ -578,10 +633,10 @@ supported by the retrieved context.
         ]
     )
 
+    structured_llm = llm.with_structured_output(AnswerGrade)
     grader_chain = (
         grader_prompt
-        | llm
-        | parser
+        | structured_llm
     )
 
     def answer_grader_node(state: RAGState):
