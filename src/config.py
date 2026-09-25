@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str | None = None
     openai_api_key: str | None = None
     reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
+    retrieval_confidence_threshold: float = 0.7
+    retrieval_min_confident_docs: int = 3
 
     model_config = SettingsConfigDict(
         env_file=".env",
