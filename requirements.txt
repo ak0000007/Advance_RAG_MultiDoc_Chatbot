@@ -546,5 +546,5 @@ zstandard==0.25.0
     # via langsmith
 langchain-google-genai
 langchain-openai
-# The following packages are considered to be unsafe in a requirements file:
-# setuptools
+fastapi
+uvicorn
