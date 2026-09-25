@@ -41,10 +41,11 @@ def get_compiled_graph():
     # 1. LLM (Gemini + DeepSeek fallback)
     # ------------------------------------------------
 
-    fallback = "deepseek" if settings.deepseek_api_key else None
+    fallback = "openai" if settings.openai_api_key else None
     llm = create_llm(
         provider="google",
         fallback_provider=fallback,
+        temperature=0.0,
     )
 
     # ------------------------------------------------
@@ -112,6 +113,8 @@ def get_compiled_graph():
         llm=llm,
         retriever=retriever,
         generation_chain=generation_chain,
+        score_threshold=settings.retrieval_confidence_threshold,
+        min_confident_docs=settings.retrieval_min_confident_docs,
     )
 
     return graph
