@@ -29,7 +29,9 @@ dependencies = [
     "bitsandbytes>=0.46.1",
     "accelerate",
     "langsmith",
-    "langchain-google-genai"
+    "langchain-google-genai",
+    "fastapi",
+    "uvicorn"
 ]
 
 [project.optional-dependencies]
