@@ -28,7 +28,10 @@ Run:
 
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+load_dotenv()
 
 from src.api.routes import router
 from src.api.dependencies import get_compiled_graph

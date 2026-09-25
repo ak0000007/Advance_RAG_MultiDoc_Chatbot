@@ -41,9 +41,10 @@ def get_compiled_graph():
     # 1. LLM (Gemini + DeepSeek fallback)
     # ------------------------------------------------
 
+    fallback = "deepseek" if settings.deepseek_api_key else None
     llm = create_llm(
         provider="google",
-        fallback_provider="deepseek",
+        fallback_provider=fallback,
     )
 
     # ------------------------------------------------
