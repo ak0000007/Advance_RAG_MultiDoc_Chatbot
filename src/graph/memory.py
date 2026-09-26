@@ -22,8 +22,10 @@ def get_checkpointer(postgres_url: Optional[str] = None):
             # We use PostgresSaver with a sync connection for simplicity in the factory,
             # or require the caller to handle context managers if using async.
             import psycopg
-            conn = psycopg.connect(postgres_url)
-            return PostgresSaver(conn)
+            conn = psycopg.connect(postgres_url, autocommit=True)
+            saver = PostgresSaver(conn)
+            saver.setup()
+            return saver
         except ImportError:
             print("WARNING: langgraph-checkpoint-postgres or psycopg not installed. Falling back to MemorySaver.")
     
