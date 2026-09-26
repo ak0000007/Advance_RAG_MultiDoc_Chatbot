@@ -718,3 +718,31 @@ def create_fallback_node():
         }
 
     return fallback_node
+
+
+# =========================================================
+# Memory Update Node
+# =========================================================
+
+
+def create_update_memory_node():
+    """
+    Append the current question and answer to the history
+    so the checkpointer (database) saves the conversation.
+    """
+    from langchain_core.messages import HumanMessage, AIMessage
+
+    def update_memory_node(state: RAGState):
+        question = state["question"]
+        answer = state.get("answer", "")
+        
+        # Read existing history
+        history = state.get("history", [])[:]
+        
+        # Append the new interaction
+        history.append(HumanMessage(content=question))
+        history.append(AIMessage(content=answer))
+        
+        return {"history": history}
+
+    return update_memory_node

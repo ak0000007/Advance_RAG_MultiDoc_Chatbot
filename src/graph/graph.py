@@ -45,6 +45,7 @@ from src.graph.nodes import (
     create_answer_grader_node,
     create_fallback_node,
     create_retrieval_confidence_router,
+    create_update_memory_node,
     route_question,
     route_after_grading,
 )
@@ -56,6 +57,7 @@ def build_rag_graph(
     generation_chain,
     score_threshold: float = 0.7,
     min_confident_docs: int = 3,
+    checkpointer=None,
 ):
     """
     Build the corrective RAG workflow with
@@ -64,6 +66,9 @@ def build_rag_graph(
     score_threshold / min_confident_docs control when the
     LLM retrieval grader is skipped. Set score_threshold=1.0
     to always grade (original behavior).
+    
+    checkpointer allows injecting persistent database memory 
+    (like PostgresSaver) or MemorySaver without changing logic.
     """
 
     graph_builder = StateGraph(RAGState)
@@ -126,6 +131,11 @@ def build_rag_graph(
     graph_builder.add_node(
         "fallback",
         fallback_node,
+    )
+
+    graph_builder.add_node(
+        "update_memory",
+        create_update_memory_node(),
     )
 
     # -----------------------------------------------------
@@ -204,12 +214,17 @@ def build_rag_graph(
 
     graph_builder.add_edge(
         "grade_answer",
-        END,
+        "update_memory",
     )
 
     graph_builder.add_edge(
         "fallback",
+        "update_memory",
+    )
+
+    graph_builder.add_edge(
+        "update_memory",
         END,
     )
 
-    return graph_builder.compile()
+    return graph_builder.compile(checkpointer=checkpointer)
