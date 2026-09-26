@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     retrieval_confidence_threshold: float = 0.7
     retrieval_min_confident_docs: int = 3
     postgres_url: str | None = None
+    qdrant_url: str | None = None
+    qdrant_api_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
