@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
     retrieval_confidence_threshold: float = 0.7
     retrieval_min_confident_docs: int = 3
+    postgres_url: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
