@@ -122,7 +122,8 @@ httpx[http2]==0.28.1
     #   unstructured-client
     #   weasel
 httpx-sse==0.4.3
-    # via langchain-community
+    # via 
+    
 httpx2==2.13.0
     # via langsmith
 huggingface-hub==1.31.0

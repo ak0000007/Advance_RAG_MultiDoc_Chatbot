@@ -14,6 +14,7 @@ env/
 # Environment / secrets
 .env
 .env.*
+!.env.example
 
 # Data
 data/*
@@ -36,3 +37,10 @@ Thumbs.db
 *.pt
 *.pth
 *.safetensors
+# Database Storage Volumes (NEVER PUSH THESE)
+postgres_storage/
+qdrant_storage/
+qdrant_data/
+local_test_qdrant/
+local_test_qdrant_2/
+*.egg-info/
