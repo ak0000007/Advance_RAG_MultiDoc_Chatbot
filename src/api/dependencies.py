@@ -59,11 +59,19 @@ def get_compiled_graph():
     # 3. Vector store (Qdrant — local persistent)
     # ------------------------------------------------
 
-    qdrant_store = QdrantStore(
-        embeddings=embeddings,
-        collection_name="multidoc_rag",
-        path="./qdrant_data",
-    )
+    if settings.qdrant_url:
+        qdrant_store = QdrantStore(
+            embeddings=embeddings,
+            collection_name="multidoc_rag",
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key,
+        )
+    else:
+        qdrant_store = QdrantStore(
+            embeddings=embeddings,
+            collection_name="multidoc_rag",
+            path="./qdrant_data",
+        )
 
     # ------------------------------------------------
     # 4. BM25 sparse retriever
