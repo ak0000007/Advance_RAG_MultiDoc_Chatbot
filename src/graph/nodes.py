@@ -8,7 +8,7 @@ using the shared RAGState.
 from pydantic import BaseModel, Field
 
 from src.graph.state import RAGState
-from src.rag.conversational import build_query_rewriter
+from src.rag.rewriter import build_query_rewriter
 from src.rag.chain import format_docs
 
 from langchain_core.prompts import (

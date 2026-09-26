@@ -17,14 +17,18 @@ def get_checkpointer(postgres_url: Optional[str] = None):
     """
     if postgres_url:
         try:
-            from langgraph.checkpoint.postgres import PostgresSaver
-            # Note: For production with async, use AsyncPostgresSaver and connection pooling.
-            # We use PostgresSaver with a sync connection for simplicity in the factory,
-            # or require the caller to handle context managers if using async.
-            import psycopg
-            conn = psycopg.connect(postgres_url, autocommit=True)
-            saver = PostgresSaver(conn)
-            saver.setup()
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from psycopg_pool import AsyncConnectionPool
+            
+            # Use AsyncConnectionPool for async IO and thread safety.
+            # Setup (DB creation) is deferred to the caller (e.g., FastAPI lifespan)
+            # because it is an async method and this factory remains sync to support @lru_cache.
+            pool = AsyncConnectionPool(
+                conninfo=postgres_url,
+                max_size=20,
+                kwargs={"autocommit": True}
+            )
+            saver = AsyncPostgresSaver(pool)
             return saver
         except ImportError:
             print("WARNING: langgraph-checkpoint-postgres or psycopg not installed. Falling back to MemorySaver.")
