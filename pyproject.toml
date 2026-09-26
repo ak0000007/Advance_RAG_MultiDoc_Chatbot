@@ -31,7 +31,12 @@ dependencies = [
     "langsmith",
     "langchain-google-genai",
     "fastapi",
-    "uvicorn"
+    "uvicorn",
+    "langgraph",
+    "langgraph-checkpoint-postgres",
+    "psycopg-binary",
+    "psycopg-pool",
+    "torch"
 ]
 
 [project.optional-dependencies]
