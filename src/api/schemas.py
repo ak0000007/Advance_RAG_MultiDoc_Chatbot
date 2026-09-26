@@ -22,7 +22,15 @@ class ChatRequest(BaseModel):
         default_factory=list,
         description=(
             "Conversation history as list of "
-            "LangChain message dicts."
+            "LangChain message dicts (legacy stateless mode)."
+        ),
+    )
+
+    thread_id: str | None = Field(
+        default=None,
+        description=(
+            "Unique session ID for database memory. "
+            "If provided, history field is ignored."
         ),
     )
 

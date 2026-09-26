@@ -39,12 +39,17 @@ async def chat(
     Returns answer and grading metadata.
     """
 
-    result = await graph.ainvoke(
-        {
-            "question": request.question,
-            "history": request.history,
-        }
-    )
+    # Support both stateless (history) and stateful (thread_id) modes
+    inputs = {"question": request.question}
+    config = {}
+
+    if request.thread_id:
+        config = {"configurable": {"thread_id": request.thread_id}}
+    else:
+        # Legacy stateless mode
+        inputs["history"] = request.history
+
+    result = await graph.ainvoke(inputs, config)
 
     return ChatResponse(
         answer=result.get("answer", ""),

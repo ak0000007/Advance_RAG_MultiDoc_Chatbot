@@ -105,6 +105,9 @@ def get_compiled_graph():
 
     generation_chain = build_generation_chain(llm)
 
+    from src.graph.memory import get_checkpointer
+    checkpointer = get_checkpointer(settings.postgres_url)
+
     # ------------------------------------------------
     # 8. Compile graph
     # ------------------------------------------------
@@ -115,6 +118,7 @@ def get_compiled_graph():
         generation_chain=generation_chain,
         score_threshold=settings.retrieval_confidence_threshold,
         min_confident_docs=settings.retrieval_min_confident_docs,
+        checkpointer=checkpointer,
     )
 
     return graph
