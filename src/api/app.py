@@ -42,7 +42,13 @@ async def lifespan(app: FastAPI):
     """
     Eagerly build graph at startup so first request is fast.
     """
-    get_compiled_graph()
+    graph = get_compiled_graph()
+    if hasattr(graph, "checkpointer") and hasattr(graph.checkpointer, "setup"):
+        import inspect
+        if inspect.iscoroutinefunction(graph.checkpointer.setup):
+            await graph.checkpointer.setup()
+        else:
+            graph.checkpointer.setup()
     yield
 
 

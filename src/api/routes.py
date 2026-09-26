@@ -29,7 +29,7 @@ def health():
     "/chat",
     response_model=ChatResponse,
 )
-def chat(
+async def chat(
     request: ChatRequest,
     graph=Depends(get_compiled_graph),
 ):
@@ -49,7 +49,7 @@ def chat(
         # Legacy stateless mode
         inputs["history"] = request.history
 
-    result = graph.invoke(inputs, config)
+    result = await graph.ainvoke(inputs, config)
 
     return ChatResponse(
         answer=result.get("answer", ""),
