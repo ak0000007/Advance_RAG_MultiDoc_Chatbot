@@ -50,54 +50,6 @@ def list_providers() -> list[str]:
 
 
 # =========================================================
-# Error classification
-# =========================================================
-
-
-def _is_rate_limit_error(exc: Exception) -> bool:
-    """
-    Determine whether an exception represents a retryable
-    rate-limit/quota condition.
-
-    We intentionally do NOT treat every exception as a
-    fallback condition.
-    """
-
-    error_text = str(exc).lower()
-
-    rate_limit_patterns = [
-        "429",
-        "rate limit",
-        "rate_limit",
-        "quota",
-        "resource exhausted",
-        "too many requests",
-        "resource_exhausted",
-    ]
-
-    return any(
-        pattern in error_text
-        for pattern in rate_limit_patterns
-    )
-
-
-def _raise_classified_error(exc: Exception) -> None:
-    """
-    Convert only retryable quota/rate-limit errors into
-    ModelRateLimitError.
-
-    All other errors are allowed to propagate normally.
-    """
-
-    if _is_rate_limit_error(exc):
-        raise ModelRateLimitError(
-            f"Primary model rate limit/quota error: {exc}"
-        ) from exc
-
-    raise exc
-
-
-# =========================================================
 # Google Gemini
 # =========================================================
 
@@ -146,9 +98,7 @@ def _create_gemini(
         **gemini_kwargs
     )
 
-    return _RateLimitAwareModel(
-        base_model
-    )
+    return base_model
 
 
 # =========================================================
@@ -276,114 +226,6 @@ def _create_local(
 
 
 # =========================================================
-# Rate-limit aware wrapper
-# =========================================================
-
-
-from langchain_core.runnables import Runnable
-
-
-class _FallbackAwareModel(Runnable):
-    """
-    A proxy that ensures chain modifications like with_structured_output
-    are applied to BOTH the primary and fallback models, before 
-    re-applying the fallback routing logic.
-    """
-    def __init__(self, primary, fallback):
-        self.primary = primary
-        self.fallback = fallback
-        self.runnable = primary.with_fallbacks(
-            [fallback], 
-            exceptions_to_handle=(ModelRateLimitError,)
-        )
-
-    def invoke(self, *args, **kwargs):
-        return self.runnable.invoke(*args, **kwargs)
-
-    async def ainvoke(self, *args, **kwargs):
-        return await self.runnable.ainvoke(*args, **kwargs)
-        
-    def stream(self, *args, **kwargs):
-        return self.runnable.stream(*args, **kwargs)
-
-    def bind_tools(self, *args, **kwargs):
-        return self.primary.bind_tools(*args, **kwargs).with_fallbacks(
-            [self.fallback.bind_tools(*args, **kwargs)],
-            exceptions_to_handle=(ModelRateLimitError,)
-        )
-
-    def with_structured_output(self, *args, **kwargs):
-        return self.primary.with_structured_output(*args, **kwargs).with_fallbacks(
-            [self.fallback.with_structured_output(*args, **kwargs)],
-            exceptions_to_handle=(ModelRateLimitError,)
-        )
-        
-    def __getattr__(self, name):
-        return getattr(self.runnable, name)
-
-class _RateLimitAwareModel(Runnable):
-    """
-    Thin proxy around a LangChain ChatModel.
-
-    Its job is to classify Gemini quota/rate-limit failures
-    without changing the underlying model interface.
-
-    Important:
-        bind_tools(), invoke(), stream(), etc. are delegated
-        to the wrapped model.
-    """
-
-    def __init__(
-        self,
-        model: BaseChatModel | Runnable,
-    ):
-        self._model = model
-
-    def __getattr__(self, name: str):
-        return getattr(
-            self._model,
-            name,
-        )
-
-    def bind_tools(self, *args: Any, **kwargs: Any) -> Runnable:
-        bound = self._model.bind_tools(*args, **kwargs)
-        return _RateLimitAwareModel(bound)
-
-    def with_structured_output(self, *args, **kwargs):
-        bound = self._model.with_structured_output(*args, **kwargs)
-        return _RateLimitAwareModel(bound)
-
-
-    def invoke(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ):
-        try:
-            return self._model.invoke(
-                *args,
-                **kwargs,
-            )
-
-        except Exception as exc:
-            _raise_classified_error(exc)
-
-    async def ainvoke(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ):
-        try:
-            return await self._model.ainvoke(
-                *args,
-                **kwargs,
-            )
-
-        except Exception as exc:
-            _raise_classified_error(exc)
-
-
-# =========================================================
 # Single provider factory
 # =========================================================
 
@@ -459,6 +301,7 @@ def create_llm(
     fallback_provider: str | None = "openai",
     fallback_model: str | None = None,
     fallback_api_key: str | None = None,
+    structured_output: type | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
     """
@@ -471,10 +314,8 @@ def create_llm(
         rate/quota failure
            ↓
         DeepSeek
-
-    LangGraph only receives the resulting model and does
-    not need to know anything about provider fallback.
     """
+    from langchain_core.runnables import Runnable
 
     primary_llm = _create_single_llm(
         provider,
@@ -484,6 +325,9 @@ def create_llm(
         max_tokens=max_tokens,
         **kwargs,
     )
+    
+    if structured_output:
+        primary_llm = primary_llm.with_structured_output(structured_output)
 
     if not fallback_provider:
         return primary_llm
@@ -496,5 +340,16 @@ def create_llm(
         max_tokens=max_tokens,
         **kwargs,
     )
+    
+    if structured_output:
+        fallback_llm = fallback_llm.with_structured_output(structured_output)
 
-    return _FallbackAwareModel(primary=primary_llm, fallback=fallback_llm)
+    # Use native exceptions for fallbacks
+    exceptions = (Exception,)
+    try:
+        from google.api_core.exceptions import ResourceExhausted, TooManyRequests
+        exceptions = (ResourceExhausted, TooManyRequests, Exception)
+    except ImportError:
+        pass
+
+    return primary_llm.with_fallbacks([fallback_llm], exceptions_to_handle=exceptions)
