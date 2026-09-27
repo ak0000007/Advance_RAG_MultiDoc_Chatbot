@@ -409,7 +409,21 @@ Determine whether the retrieved context is relevant.
         ]
     )
 
-    structured_llm = llm.with_structured_output(RetrievalGrade)
+    # If the LLM is already structured (e.g. via factory Native Composition),
+    # use it directly. Otherwise, add structured output dynamically.
+    structured_llm = llm if hasattr(llm, "with_fallbacks") and not hasattr(llm, "with_structured_output") else (
+        llm if hasattr(llm, "with_fallbacks") and type(llm).__name__ == "RunnableWithFallbacks" else 
+        llm.with_structured_output(RetrievalGrade) if hasattr(llm, "with_structured_output") else llm
+    )
+    
+    # Better yet, since we use Native Composition, we can just assume `llm` is already properly structured 
+    # if it doesn't have `with_structured_output` (meaning it's a RunnableWithFallbacks that was already configured)
+    
+    try:
+        structured_llm = llm.with_structured_output(RetrievalGrade)
+    except AttributeError:
+        structured_llm = llm  # Already configured via factory
+        
     grader_chain = (
         grader_prompt
         | structured_llm
@@ -633,7 +647,11 @@ supported by the retrieved context.
         ]
     )
 
-    structured_llm = llm.with_structured_output(AnswerGrade)
+    try:
+        structured_llm = llm.with_structured_output(AnswerGrade)
+    except AttributeError:
+        structured_llm = llm  # Already configured via factory
+        
     grader_chain = (
         grader_prompt
         | structured_llm

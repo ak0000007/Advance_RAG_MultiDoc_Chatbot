@@ -55,6 +55,8 @@ def build_rag_graph(
     llm,
     retriever,
     generation_chain,
+    retrieval_grader_llm=None,
+    answer_grader_llm=None,
     score_threshold: float = 0.7,
     min_confident_docs: int = 3,
     checkpointer=None,
@@ -86,7 +88,7 @@ def build_rag_graph(
     )
 
     retrieval_grader_node = create_retrieval_grader_node(
-        llm
+        retrieval_grader_llm or llm
     )
 
     generation_node = create_generation_node(
@@ -94,7 +96,7 @@ def build_rag_graph(
     )
 
     answer_grader_node = create_answer_grader_node(
-        llm
+        answer_grader_llm or llm
     )
 
     fallback_node = create_fallback_node()
