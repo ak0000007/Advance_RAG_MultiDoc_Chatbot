@@ -549,3 +549,9 @@ langchain-google-genai
 langchain-openai
 fastapi
 uvicorn
+
+# Salesforce Integration
+PyJWT>=2.8.0
+cryptography>=42.0.0
+requests>=2.31.0
+httpx>=0.27.0

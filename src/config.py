@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     qdrant_url: str | None = None
     qdrant_api_key: str | None = None
 
+    # Salesforce JWT
+    sf_client_id: str | None = None
+    sf_login_url: str = "https://login.salesforce.com"
+    sf_private_key_path: str | None = None
+    sf_domain: str = "https://your-domain.my.salesforce.com"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
