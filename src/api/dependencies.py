@@ -41,11 +41,30 @@ def get_compiled_graph():
     # 1. LLM (Gemini + DeepSeek fallback)
     # ------------------------------------------------
 
+    from src.graph.nodes import RetrievalGrade, AnswerGrade
+    
     fallback = "openai" if settings.openai_api_key else None
+    
+    # Standard LLM (for generation and query rewriting)
     llm = create_llm(
         provider="google",
         fallback_provider=fallback,
         temperature=0.0,
+    )
+    
+    # Pre-configured structured LLMs for nodes
+    retrieval_grader_llm = create_llm(
+        provider="google",
+        fallback_provider=fallback,
+        temperature=0.0,
+        structured_output=RetrievalGrade,
+    )
+    
+    answer_grader_llm = create_llm(
+        provider="google",
+        fallback_provider=fallback,
+        temperature=0.0,
+        structured_output=AnswerGrade,
     )
 
     # ------------------------------------------------
@@ -124,6 +143,8 @@ def get_compiled_graph():
         llm=llm,
         retriever=retriever,
         generation_chain=generation_chain,
+        retrieval_grader_llm=retrieval_grader_llm,
+        answer_grader_llm=answer_grader_llm,
         score_threshold=settings.retrieval_confidence_threshold,
         min_confident_docs=settings.retrieval_min_confident_docs,
         checkpointer=checkpointer,
