@@ -38,6 +38,20 @@ def build_rag_graph(
     async def agent_node(state: RAGState):
         messages = state.get("messages", [])
         
+        # Security/Cost: Limit to 5 tool-call iterations per user turn
+        tool_call_count = 0
+        for msg in reversed(messages):
+            if getattr(msg, "type", "") == "human":
+                break
+            if getattr(msg, "tool_calls", None):
+                tool_call_count += 1
+                
+        if tool_call_count >= 5:
+            # Gracefully stop the loop without crashing the API
+            from langchain_core.messages import AIMessage
+            fallback_msg = AIMessage(content="I've reached the maximum number of attempts to find this information. Please try rephrasing your request or checking the constraints.")
+            return {"messages": [fallback_msg], "answer": fallback_msg.content}
+            
         # Invoke LLM
         response = await llm_with_tools.ainvoke(messages)
         
