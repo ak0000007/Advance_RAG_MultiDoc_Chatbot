@@ -21,9 +21,25 @@ from src.retrieval.bm25_store import BM25Store
 from src.retrieval.hybrid_retriever import HybridRetriever
 from src.reranking.reranker import CrossEncoderReranker
 from src.rag.chain import build_generation_chain
+from src.tools.document_search import build_document_search_tool
+from src.tools.salesforce_tools import build_salesforce_opportunities_tool
 from src.graph.graph import build_rag_graph
 from src.config import settings
 
+
+from src.clients.salesforce_client import SalesforceAsyncClient
+
+@lru_cache
+def get_salesforce_client() -> SalesforceAsyncClient | None:
+    if not settings.sf_client_id or not settings.sf_private_key_path:
+        return None
+        
+    return SalesforceAsyncClient(
+        client_id=settings.sf_client_id,
+        login_url=settings.sf_login_url,
+        private_key_path=settings.sf_private_key_path,
+        domain=settings.sf_domain
+    )
 
 @lru_cache
 def get_compiled_graph():
@@ -136,17 +152,20 @@ def get_compiled_graph():
     checkpointer = get_checkpointer(settings.postgres_url)
 
     # ------------------------------------------------
-    # 8. Compile graph
+    # 8. Build Tools and Compile Graph
     # ------------------------------------------------
+    
+    qdrant_tool = build_document_search_tool(retriever)
+    
+    sf_client = get_salesforce_client()
+    # Note: If sf_client is None (no keys), the tool just won't work, but for now we append it if available.
+    tools = [qdrant_tool]
+    if sf_client:
+        tools.append(build_salesforce_opportunities_tool(sf_client))
 
     graph = build_rag_graph(
         llm=llm,
-        retriever=retriever,
-        generation_chain=generation_chain,
-        retrieval_grader_llm=retrieval_grader_llm,
-        answer_grader_llm=answer_grader_llm,
-        score_threshold=settings.retrieval_confidence_threshold,
-        min_confident_docs=settings.retrieval_min_confident_docs,
+        tools=tools,
         checkpointer=checkpointer,
     )
 

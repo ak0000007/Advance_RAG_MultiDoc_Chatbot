@@ -1,232 +1,71 @@
 """
 LangGraph workflow construction.
 
-Current architecture:
+New Architecture (Single ReAct Agent):
 
 START
   ↓
-Question Router
-  ├── standalone ────────────────┐
-  │                              ↓
-  │                           Retrieval
-  │                              ↓
-  └── follow-up → Rewrite → Retrieval
-                                 ↓
-                           Retrieval Grader
-                           /             \
-                       GOOD              BAD
-                        ↓                 ↓
-                    Generate          Rewrite
-                        ↓                 ↑
-                  Answer Grader           │
-                        ↓                 │
-                       END            Retrieve
-                                         ↓
-                                       Grade
-                                         ↓
-                                      Fallback
-                                         ↓
-                                        END
+Agent Node ──(if tool needed)──> Tool Node
+  ↑                               │
+  └────────(tool results)─────────┘
+  ↓ (if text response)
+ END
 """
 
-from langgraph.graph import (
-    StateGraph,
-    START,
-    END,
-)
+from typing import Literal
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode
+from langchain_core.messages import AIMessage
 
 from src.graph.state import RAGState
 
-from src.graph.nodes import (
-    create_query_rewriter_node,
-    create_retrieval_node,
-    create_retrieval_grader_node,
-    create_generation_node,
-    create_answer_grader_node,
-    create_fallback_node,
-    create_retrieval_confidence_router,
-    create_update_memory_node,
-    route_question,
-    route_after_grading,
-)
-
-
 def build_rag_graph(
     llm,
-    retriever,
-    generation_chain,
-    retrieval_grader_llm=None,
-    answer_grader_llm=None,
-    score_threshold: float = 0.7,
-    min_confident_docs: int = 3,
+    tools: list,
     checkpointer=None,
+    **kwargs
 ):
     """
-    Build the corrective RAG workflow with
-    answer-quality evaluation.
-
-    score_threshold / min_confident_docs control when the
-    LLM retrieval grader is skipped. Set score_threshold=1.0
-    to always grade (original behavior).
-    
-    checkpointer allows injecting persistent database memory 
-    (like PostgresSaver) or MemorySaver without changing logic.
+    Build a ReAct Agent workflow.
+    Replaces the old strict linear RAG pipeline.
     """
-
     graph_builder = StateGraph(RAGState)
+    
+    # 1. Bind tools to the LLM
+    llm_with_tools = llm.bind_tools(tools)
+    
+    # 2. Define the Agent Node
+    async def agent_node(state: RAGState):
+        messages = state.get("messages", [])
+        
+        # Invoke LLM
+        response = await llm_with_tools.ainvoke(messages)
+        
+        # Update state natively
+        update = {"messages": [response]}
+        
+        # If it's a final answer (no tool calls), populate 'answer' field for legacy routes compatibility
+        if not response.tool_calls and response.content:
+            update["answer"] = str(response.content)
+            
+        return update
 
-    # -----------------------------------------------------
-    # Create nodes
-    # -----------------------------------------------------
-
-    query_rewriter_node = create_query_rewriter_node(
-        llm
-    )
-
-    retrieval_node = create_retrieval_node(
-        retriever
-    )
-
-    retrieval_grader_node = create_retrieval_grader_node(
-        retrieval_grader_llm or llm
-    )
-
-    generation_node = create_generation_node(
-        generation_chain
-    )
-
-    answer_grader_node = create_answer_grader_node(
-        answer_grader_llm or llm
-    )
-
-    fallback_node = create_fallback_node()
-
-    # -----------------------------------------------------
-    # Register nodes
-    # -----------------------------------------------------
-
-    graph_builder.add_node(
-        "rewrite",
-        query_rewriter_node,
-    )
-
-    graph_builder.add_node(
-        "retrieve",
-        retrieval_node,
-    )
-
-    graph_builder.add_node(
-        "grade_retrieval",
-        retrieval_grader_node,
-    )
-
-    graph_builder.add_node(
-        "generate",
-        generation_node,
-    )
-
-    graph_builder.add_node(
-        "grade_answer",
-        answer_grader_node,
-    )
-
-    graph_builder.add_node(
-        "fallback",
-        fallback_node,
-    )
-
-    graph_builder.add_node(
-        "update_memory",
-        create_update_memory_node(),
-    )
-
-    # -----------------------------------------------------
-    # START → Question Router
-    # -----------------------------------------------------
-
-    graph_builder.add_conditional_edges(
-        START,
-        route_question,
-        {
-            "rewrite": "rewrite",
-            "retrieve": "retrieve",
-        },
-    )
-
-    # -----------------------------------------------------
-    # Rewrite → Retrieve
-    # -----------------------------------------------------
-
-    graph_builder.add_edge(
-        "rewrite",
-        "retrieve",
-    )
-
-    # -----------------------------------------------------
-    # Retrieve → Confidence Check
-    #
-    # High reranker score + enough docs → skip grader
-    # Low score or few docs → grade with LLM
-    # No docs → fallback
-    # -----------------------------------------------------
-
-    retrieval_confidence_router = (
-        create_retrieval_confidence_router(
-            score_threshold=score_threshold,
-            min_docs=min_confident_docs,
-        )
-    )
-
-    graph_builder.add_conditional_edges(
-        "retrieve",
-        retrieval_confidence_router,
-        {
-            "generate": "generate",
-            "grade_retrieval": "grade_retrieval",
-            "fallback": "fallback",
-        },
-    )
-
-    # -----------------------------------------------------
-    # Retrieval Grader → Decision
-    # -----------------------------------------------------
-
-    graph_builder.add_conditional_edges(
-        "grade_retrieval",
-        route_after_grading,
-        {
-            "generate": "generate",
-            "rewrite": "rewrite",
-            "fallback": "fallback",
-        },
-    )
-
-    # -----------------------------------------------------
-    # Generate → Answer Grader
-    # -----------------------------------------------------
-
-    graph_builder.add_edge(
-        "generate",
-        "grade_answer",
-    )
-
-    # -----------------------------------------------------
-    # Terminal edges
-    # -----------------------------------------------------
-
-    graph_builder.add_edge(
-        "grade_answer",
-        "update_memory",
-    )
-
-    graph_builder.add_edge(
-        "fallback",
-        "update_memory",
-    )
-
-    graph_builder.add_edge(
-        "update_memory",
-        END,
-    )
-
+    # 3. Define the routing logic
+    def should_continue(state: RAGState) -> Literal["tools", "__end__"]:
+        messages = state.get("messages", [])
+        last_message = messages[-1]
+        
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            return "tools"
+        return "__end__"
+        
+    # 4. Add Nodes
+    graph_builder.add_node("agent", agent_node)
+    graph_builder.add_node("tools", ToolNode(tools))
+    
+    # 5. Connect Edges
+    graph_builder.add_edge(START, "agent")
+    graph_builder.add_conditional_edges("agent", should_continue, {"tools": "tools", "__end__": END})
+    graph_builder.add_edge("tools", "agent")
+    
     return graph_builder.compile(checkpointer=checkpointer)

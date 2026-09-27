@@ -40,14 +40,21 @@ async def chat(
     """
 
     # Support both stateless (history) and stateful (thread_id) modes
-    inputs = {"question": request.question}
-    config = {}
+    # Pass human messages natively into the new RAGState
+    from langchain_core.messages import HumanMessage
+    inputs = {
+        "question": request.question,
+        "messages": [HumanMessage(content=request.question)]
+    }
+    config = {"configurable": {}}
 
     if request.thread_id:
-        config = {"configurable": {"thread_id": request.thread_id}}
+        config["configurable"]["thread_id"] = request.thread_id
     else:
-        # Legacy stateless mode
         inputs["history"] = request.history
+        
+    if request.sf_username:
+        config["configurable"]["sf_username"] = request.sf_username
 
     result = await graph.ainvoke(inputs, config)
 
