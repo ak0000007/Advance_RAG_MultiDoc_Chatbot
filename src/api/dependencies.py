@@ -57,7 +57,7 @@ def get_compiled_graph():
     # 1. LLM (Gemini + DeepSeek fallback)
     # ------------------------------------------------
 
-    from src.graph.nodes import RetrievalGrade, AnswerGrade
+    from src.rag.grading import RetrievalGrade
     
     fallback = "openai" if settings.openai_api_key else None
     
@@ -76,12 +76,6 @@ def get_compiled_graph():
         structured_output=RetrievalGrade,
     )
     
-    answer_grader_llm = create_llm(
-        provider="google",
-        fallback_provider=fallback,
-        temperature=0.0,
-        structured_output=AnswerGrade,
-    )
 
     # ------------------------------------------------
     # 2. Embeddings
@@ -155,7 +149,18 @@ def get_compiled_graph():
     # 8. Build Tools and Compile Graph
     # ------------------------------------------------
     
-    qdrant_tool = build_document_search_tool(retriever)
+    from src.rag.grading import build_retrieval_grader
+    from src.rag.rewriter import build_corrective_rewriter
+    
+    grader_chain = build_retrieval_grader(retrieval_grader_llm)
+    rewriter_chain = build_corrective_rewriter(llm)
+    
+    qdrant_tool = build_document_search_tool(
+        retriever, 
+        grader_chain, 
+        rewriter_chain, 
+        settings.max_retrieval_attempts
+    )
     
     sf_client = get_salesforce_client()
     # Note: If sf_client is None (no keys), the tool just won't work, but for now we append it if available.

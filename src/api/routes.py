@@ -60,14 +60,4 @@ async def chat(
 
     return ChatResponse(
         answer=result.get("answer", ""),
-        answer_supported=result.get("answer_supported"),
-        answer_grade_reason=result.get(
-            "answer_grade_reason"
-        ),
-        retrieval_relevant=result.get(
-            "retrieval_relevant"
-        ),
-        retrieval_grade_reason=result.get(
-            "retrieval_grade_reason"
-        ),
     )

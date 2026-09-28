@@ -206,3 +206,56 @@ What is the population of Germany?
         | StrOutputParser()
         | RunnableLambda(lambda text: text.strip())
     )
+
+def build_corrective_rewriter(llm):
+    """
+    Build an LCEL query-rewriting chain for retrieval retries.
+    """
+    retry_prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """
+You are a query rewriting component inside a
+Retrieval-Augmented Generation system.
+
+The previous retrieval attempt was judged NOT RELEVANT
+to the user's question.
+
+Your task is to create a better search query for the
+next retrieval attempt.
+
+STRICT RULES:
+
+1. Output ONLY one search query.
+2. NEVER answer the user's question.
+3. Do not explain your reasoning.
+4. Preserve the user's actual intent.
+5. Make the query more explicit and retrieval-friendly.
+6. Address the reason why the previous retrieval failed.
+7. Return exactly ONE search query.
+                """,
+            ),
+            (
+                "human",
+                """
+Original question:
+{question}
+
+Reason previous retrieval failed:
+{reason}
+
+Create a better retrieval query.
+                """,
+            ),
+        ]
+    )
+
+    return (
+        retry_prompt
+        | llm
+        | StrOutputParser()
+        | RunnableLambda(
+            lambda text: text.strip()
+        )
+    )

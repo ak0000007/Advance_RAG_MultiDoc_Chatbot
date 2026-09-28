@@ -39,10 +39,6 @@ class RAGState(TypedDict, total=False):
 
     retrieval_attempts: int
 
-    retrieval_relevant: bool
-
-    retrieval_grade_reason: str
-
     # -----------------------------------------------------
     # Generation
     # -----------------------------------------------------
@@ -52,7 +48,3 @@ class RAGState(TypedDict, total=False):
     # -----------------------------------------------------
     # Answer evaluation
     # -----------------------------------------------------
-
-    answer_supported: bool
-
-    answer_grade_reason: str

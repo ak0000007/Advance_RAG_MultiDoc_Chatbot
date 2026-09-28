@@ -39,10 +39,6 @@ class ChatResponse(BaseModel):
     """Outgoing chat response."""
 
     answer: str
-    answer_supported: bool | None = None
-    answer_grade_reason: str | None = None
-    retrieval_relevant: bool | None = None
-    retrieval_grade_reason: str | None = None
 
 
 class HealthResponse(BaseModel):
