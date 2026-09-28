@@ -25,6 +25,7 @@ from typing import Literal, Optional
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
 from src.graph.state import RAGState
 
@@ -129,22 +130,21 @@ def build_rag_graph(
     # Custom tool_node: wraps ToolNode but injects write_count from state into
     # the RunnableConfig before invoking tools, so the write cap is enforced
     # using authoritative state data — not LLM-supplied arguments.
+    #
+    # CRITICAL: accept `config` as second param to receive the live RunnableConfig
+    # from graph.astream() (carries sf_username, thread_id, etc.), then MERGE
+    # write_count into it. Replacing config entirely would wipe sf_username and
+    # cause every SF tool call to return "Missing sf_username in configuration".
     _base_tool_node = ToolNode(tools)
 
-    async def tool_node(state: RAGState):
-        from langchain_core.runnables import RunnableConfig
-        # Merge write_count into configurable so tools can read it via config
-        # without the LLM being able to manipulate it.
+    async def tool_node(state: RAGState, config: RunnableConfig):
         write_count = state.get("write_count", 0)
-        # ToolNode uses the config passed to graph.astream(); we patch it here
-        # by returning the ToolNode result after updating state's write_count context.
-        # We pass write_count via a thread-local approach: store in state-derived config.
-        # The tool reads: config.get("configurable", {}).get("write_count", 0)
-        result = await _base_tool_node.ainvoke(
-            state,
-            config={"configurable": {"write_count": write_count}},
-        )
-        return result
+        existing = config.get("configurable", {}) if config else {}
+        merged_config = {
+            **config,
+            "configurable": {**existing, "write_count": write_count},
+        }
+        return await _base_tool_node.ainvoke(state, config=merged_config)
 
     graph_builder.add_node("tools", tool_node)
 
