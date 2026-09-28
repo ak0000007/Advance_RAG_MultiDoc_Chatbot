@@ -45,6 +45,11 @@ class RAGState(TypedDict, total=False):
 
     answer: str
 
+    # Write safety: counts approved SF write operations in this session.
+    # Incremented by the human_approval node on every successful Approve.
+    # Checked by the update tool before initiating any approval flow.
+    write_count: int
+
     # -----------------------------------------------------
     # Answer evaluation
     # -----------------------------------------------------

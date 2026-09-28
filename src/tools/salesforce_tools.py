@@ -7,6 +7,9 @@ import json
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 
+from src.write_guards import single_record_guard, bulk_intent_guard, session_write_cap
+
+
 def build_salesforce_opportunities_tool(salesforce_client):
     """
     Create a LangChain Tool backed by the injected Salesforce client.
@@ -17,45 +20,104 @@ def build_salesforce_opportunities_tool(salesforce_client):
         """
         Search for Salesforce Opportunities (deals).
         Use this tool when the user asks about their Salesforce deals, opportunities, or amounts.
-        
+
         Args:
-            search: A specific company name or deal name to search for (e.g. 'Acme'). 
+            search: A specific company name or deal name to search for (e.g. 'Acme').
                     Leave blank to fetch the most recent deals.
         """
-        # Read the human's identity from the graph config (injected by the API route)
         sf_username = config.get("configurable", {}).get("sf_username")
-        
+
         if not sf_username:
             return "System Error: Missing sf_username in configuration. Cannot execute action on behalf of user."
-            
+
         try:
             response = await salesforce_client.get_opportunities(
                 username=sf_username,
-                search=search if search else None
+                search=search if search else None,
             )
-            
+
             if not response.get("success"):
                 return f"Salesforce Error: {response.get('errorMessage')}"
-                
+
             data = response.get("data", [])
             if not data:
                 return f"No opportunities found in Salesforce for '{search}'."
-                
-            # Format nicely for the LLM
+
             results = []
             for item in data:
-                # Omit null values to save tokens
                 fields = []
-                if item.get("name"): fields.append(f"Name: {item['name']}")
+                if item.get("name"):      fields.append(f"Name: {item['name']}")
                 if item.get("stageName"): fields.append(f"Stage: {item['stageName']}")
-                if item.get("amount"): fields.append(f"Amount: ${item['amount']}")
+                if item.get("amount"):    fields.append(f"Amount: ${item['amount']}")
                 if item.get("closeDate"): fields.append(f"Close Date: {item['closeDate']}")
-                
                 results.append(" | ".join(fields))
-                
+
             return "\n".join(results)
-            
+
         except Exception as e:
             return f"Failed to execute Salesforce query: {str(e)}"
 
     return search_salesforce_opportunities
+
+
+def build_salesforce_update_tool(salesforce_client, max_writes_per_session: int = 5):
+    """
+    Create a LangChain Tool that initiates a Salesforce Opportunity status update.
+
+    Hard caps enforced (in order, before any approval flow):
+      1. single_record_guard  — exactly ONE Salesforce ID, no lists or wildcards.
+      2. bulk_intent_guard    — rejects bulk phrasing in arguments.
+      3. session_write_cap    — rejects if per-session write limit is already reached.
+
+    Does NOT write to Salesforce directly.
+    Returns a structured approval-request payload that the human_approval graph node
+    intercepts to call interrupt() — freezing the graph until the user responds.
+
+    SRP: This tool only validates input and signals intent.
+    The human_approval node owns the interrupt/resume/execute lifecycle.
+    """
+
+    @tool
+    async def update_salesforce_opportunity_status(
+        opportunity_id: str, new_status: str, config: RunnableConfig
+    ) -> str:
+        """
+        Request a Salesforce Opportunity stage update for exactly ONE opportunity.
+        The system will pause and ask the user to approve before any data is written.
+
+        IMPORTANT: This tool ONLY accepts a single Salesforce Opportunity ID.
+        Bulk operations (e.g. "close all deals") are explicitly refused.
+
+        Args:
+            opportunity_id: Single 18-character Salesforce Opportunity ID.
+            new_status: New stage name (e.g. 'Closed Won', 'Negotiation/Review').
+        """
+        sf_username = config.get("configurable", {}).get("sf_username")
+        write_count: int = config.get("configurable", {}).get("write_count", 0)
+
+        if not sf_username:
+            return "System Error: Missing sf_username in configuration. Cannot execute on behalf of user."
+
+        # ── Hard cap 1: exactly one record ───────────────────────────────────
+        if err := single_record_guard(opportunity_id):
+            return err
+
+        # ── Hard cap 2: no bulk intent in arguments ───────────────────────────
+        if err := bulk_intent_guard(new_status):
+            return err
+
+        # ── Hard cap 3: session write ceiling ────────────────────────────────
+        if err := session_write_cap(write_count, max_writes_per_session):
+            return err
+
+        # Return structured payload. The human_approval graph node reads this,
+        # calls interrupt(), and executes the real update only on Approve.
+        return json.dumps({
+            "__requires_approval__": True,
+            "sf_username": sf_username,
+            "opportunity_id": opportunity_id,
+            "new_status": new_status,
+            "message": f"Change Opportunity '{opportunity_id}' stage to '{new_status}'?",
+        })
+
+    return update_salesforce_opportunity_status

@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     sf_private_key_path: str | None = None
     sf_domain: str = "https://your-domain.my.salesforce.com"
 
+    # Write safety caps
+    # Set WRITES_ENABLED=false in .env to strip ALL write tools at startup (read-only mode).
+    writes_enabled: bool = True
+    # Max Salesforce write operations allowed per conversation session.
+    max_writes_per_session: int = 5
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

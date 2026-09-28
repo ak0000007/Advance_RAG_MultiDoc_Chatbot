@@ -22,7 +22,8 @@ from src.retrieval.hybrid_retriever import HybridRetriever
 from src.reranking.reranker import CrossEncoderReranker
 from src.rag.chain import build_generation_chain
 from src.tools.document_search import build_document_search_tool
-from src.tools.salesforce_tools import build_salesforce_opportunities_tool
+from src.tools.salesforce_tools import build_salesforce_opportunities_tool, build_salesforce_update_tool
+from src.graph.approval import build_human_approval_node
 from src.graph.graph import build_rag_graph
 from src.config import settings
 
@@ -161,17 +162,32 @@ def get_compiled_graph():
         rewriter_chain, 
         settings.max_retrieval_attempts
     )
-    
+
     sf_client = get_salesforce_client()
-    # Note: If sf_client is None (no keys), the tool just won't work, but for now we append it if available.
     tools = [qdrant_tool]
+    human_approval_node = None
+
     if sf_client:
+        # Read-only tool: always available when SF is configured
         tools.append(build_salesforce_opportunities_tool(sf_client))
+
+        # Write tool: only added when WRITES_ENABLED=true (default).
+        # Set WRITES_ENABLED=false in .env to instantly drop all write capability
+        # without touching any other code — safe for audit/review environments.
+        if settings.writes_enabled:
+            tools.append(
+                build_salesforce_update_tool(
+                    sf_client,
+                    max_writes_per_session=settings.max_writes_per_session,
+                )
+            )
+            human_approval_node = build_human_approval_node(sf_client)
 
     graph = build_rag_graph(
         llm=llm,
         tools=tools,
         checkpointer=checkpointer,
+        human_approval_node=human_approval_node,
     )
 
     return graph
