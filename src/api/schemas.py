@@ -34,6 +34,12 @@ class ChatRequest(BaseModel):
         ),
     )
 
+    sf_username: str | None = Field(
+        default=None,
+        description="Salesforce username for executing CRM queries."
+    )
+
+
 
 class ChatResponse(BaseModel):
     """Outgoing chat response."""
