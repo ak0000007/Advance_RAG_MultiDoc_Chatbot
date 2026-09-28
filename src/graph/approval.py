@@ -22,6 +22,7 @@ Write counter:
 import hashlib
 import json
 from langchain_core.messages import ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
 
 from src.graph.state import RAGState
@@ -59,7 +60,7 @@ def build_human_approval_node(salesforce_client):
     Call this only when SF is configured; otherwise omit the node entirely.
     """
 
-    async def human_approval_node(state: RAGState) -> dict:
+    async def human_approval_node(state: RAGState, config: RunnableConfig) -> dict:
         """
         1. Scans messages for the pending approval ToolMessage.
         2. Calls interrupt() — graph freezes, returns payload to the frontend.
@@ -89,8 +90,8 @@ def build_human_approval_node(salesforce_client):
 
         # ── Build idempotency key before interrupt() ─────────────────────────
         # Must be before interrupt() so the key is identical on first run
-        # and on every re-run after resume — derived from stable state only.
-        thread_id: str | None = state.get("configurable", {}).get("thread_id")  # type: ignore[assignment]
+        # and on every re-run after resume — derived from stable state/config.
+        thread_id: str | None = config.get("configurable", {}).get("thread_id")
         idempotency_key = _build_idempotency_key(
             tool_call_id=getattr(approval_msg, "tool_call_id", None),
             thread_id=thread_id,
