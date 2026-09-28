@@ -44,3 +44,10 @@ qdrant_data/
 local_test_qdrant/
 local_test_qdrant_2/
 *.egg-info/
+
+# Security / Keys
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
