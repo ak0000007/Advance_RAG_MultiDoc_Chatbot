@@ -15,9 +15,23 @@ Agent Node ──(if tool needed)──> Tool Node
 from typing import Literal
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, SystemMessage
 
 from src.graph.state import RAGState
+
+
+SYSTEM_PROMPT = """You are an intelligent enterprise assistant.
+Your primary role is to assist users by querying the company's internal knowledge base and retrieving Salesforce data.
+
+TOOL USAGE GUIDELINES:
+1. Document Search: Use `search_documents` when the user asks general questions about company policies, internal documents, knowledge base articles, or factual information.
+2. Salesforce Data: Use the Salesforce tools when the user asks about their opportunities, pipeline, deals, or CRM data. 
+
+BEHAVIORAL GUIDELINES:
+1. If the user asks for something completely outside of your capabilities (e.g., booking flights, writing arbitrary code, or answering questions unrelated to the business), politely decline.
+2. Always base your answers on the context returned by the tools. If the tools return no relevant information, tell the user you don't know. Do not hallucinate facts.
+3. When summarizing tool results, be clear and concise.
+"""
 
 def build_rag_graph(
     llm,
@@ -48,12 +62,15 @@ def build_rag_graph(
                 
         if tool_call_count >= 5:
             # Gracefully stop the loop without crashing the API
-            from langchain_core.messages import AIMessage
+            from langchain_core.messages import AIMessage, SystemMessage
             fallback_msg = AIMessage(content="I've reached the maximum number of attempts to find this information. Please try rephrasing your request or checking the constraints.")
             return {"messages": [fallback_msg], "answer": fallback_msg.content}
             
         # Invoke LLM
-        response = await llm_with_tools.ainvoke(messages)
+        
+        # Prepend the system prompt dynamically so it guides the LLM but isn't saved to history
+        invoke_messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+        response = await llm_with_tools.ainvoke(invoke_messages)
         
         # Update state natively
         update = {"messages": [response]}
