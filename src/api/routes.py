@@ -40,19 +40,38 @@ async def chat(
     """
 
     # Support both stateless (history) and stateful (thread_id) modes
-    # Pass human messages natively into the new RAGState
-    from langchain_core.messages import HumanMessage
+    from langchain_core.messages import HumanMessage, AIMessage
+    import uuid
+    
+    messages = []
+    
+    # Process stateless history if provided
+    if not request.thread_id and request.history:
+        for msg in request.history:
+            if isinstance(msg, dict):
+                role = msg.get("role", msg.get("type", ""))
+                content = msg.get("content", "")
+                if role in ["human", "user"]:
+                    messages.append(HumanMessage(content=content))
+                elif role in ["ai", "assistant"]:
+                    messages.append(AIMessage(content=content))
+            else:
+                messages.append(msg)
+                
+    messages.append(HumanMessage(content=request.question))
+
     inputs = {
         "question": request.question,
-        "messages": [HumanMessage(content=request.question)]
+        "messages": messages
     }
+    
     config = {"configurable": {}}
 
     if request.thread_id:
         config["configurable"]["thread_id"] = request.thread_id
     else:
-        inputs["history"] = request.history
-        
+        # Generate a one-off thread_id to satisfy the checkpointer
+        config["configurable"]["thread_id"] = str(uuid.uuid4())
     if request.sf_username:
         config["configurable"]["sf_username"] = request.sf_username
 
