@@ -8,7 +8,7 @@ async def main():
     
     # We will test the chatbot with a Salesforce-specific question.
     question = "Can you check my Salesforce opportunities and summarize them?"
-    sf_username = "akhilsaini72.acbad181466b@agentforce.com" # Dummy email, SF will reject if it's not a real user, but we'll see the tool attempt.
+    sf_username = "test@example.com" # Dummy email, SF will reject if it's not a real user, but we'll see the tool attempt.
     
     print(f"\n2. Sending question to Agent: '{question}'")
     print(f"   (Running as SF Username: {sf_username})")
