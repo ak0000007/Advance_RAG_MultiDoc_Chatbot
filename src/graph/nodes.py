@@ -21,7 +21,7 @@ from langchain_core.output_parsers import (
     PydanticOutputParser,
 )
 
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import RunnableLambda, RunnableConfig
 
 
 # =========================================================
@@ -242,7 +242,7 @@ Create a better retrieval query.
         )
     )
 
-    def query_rewriter_node(state: RAGState):
+    def query_rewriter_node(state: RAGState, config: RunnableConfig):
 
         question = state["question"]
 
@@ -272,7 +272,8 @@ Create a better retrieval query.
                     "history": history,
                     "question": question,
                     "previous_query": previous_query,
-                }
+                },
+                config=config,
             )
 
             return {
@@ -287,7 +288,8 @@ Create a better retrieval query.
             {
                 "history": history,
                 "question": question,
-            }
+            },
+            config=config,
         )
 
         return {
@@ -314,7 +316,7 @@ def create_retrieval_node(retriever):
     4. Increments retrieval_attempts.
     """
 
-    def retrieval_node(state: RAGState):
+    def retrieval_node(state: RAGState, config: RunnableConfig):
 
         query = state.get(
             "rewritten_query",
@@ -325,7 +327,8 @@ def create_retrieval_node(retriever):
             {
                 "question": query,
                 "metadata_filter": None,
-            }
+            },
+            config=config,
         )
 
         attempts = state.get(
@@ -405,7 +408,7 @@ def create_generation_node(generation_chain):
     DOES NOT perform retrieval again.
     """
 
-    def generation_node(state: RAGState):
+    def generation_node(state: RAGState, config: RunnableConfig):
 
         question = state["question"]
 
@@ -418,7 +421,8 @@ def create_generation_node(generation_chain):
             {
                 "context": documents,
                 "question": question,
-            }
+            },
+            config=config,
         )
 
         return {
