@@ -13,6 +13,9 @@ from typing import Any, Optional
 # Prevents hung requests from blocking the graph node indefinitely.
 _TIMEOUT = httpx.Timeout(10.0)
 
+# Cache tokens for 4 minutes (JWT exp is 5 min). Leaves 60s safety margin.
+_TOKEN_TTL = 240
+
 
 class SalesforceAsyncClient:
     def __init__(
@@ -28,6 +31,8 @@ class SalesforceAsyncClient:
         self.private_key_path = Path(private_key_path)
 
         self._private_key = self._load_private_key()
+        # {username: (token, expiry_timestamp)}
+        self._token_cache: dict[str, tuple[str, float]] = {}
 
     def _load_private_key(self) -> str:
         if not self.private_key_path.exists():
@@ -38,12 +43,19 @@ class SalesforceAsyncClient:
     async def get_access_token(self, username: str) -> str:
         """
         Exchange JWT for a Salesforce Access Token scoped to the user.
+        Caches tokens in memory for _TOKEN_TTL seconds to avoid
+        redundant network calls during multi-tool sequences.
         """
+        now = time.time()
+        cached = self._token_cache.get(username)
+        if cached and cached[1] > now:
+            return cached[0]
+
         payload = {
             "iss": self.client_id,
             "aud": self.login_url,
             "sub": username,
-            "exp": int(time.time()) + 300,
+            "exp": int(now) + 300,
         }
 
         encoded_jwt = jwt.encode(payload, self._private_key, algorithm="RS256")
@@ -57,7 +69,10 @@ class SalesforceAsyncClient:
                 },
             )
             resp.raise_for_status()
-            return resp.json()["access_token"]
+            token = resp.json()["access_token"]
+
+        self._token_cache[username] = (token, now + _TOKEN_TTL)
+        return token
 
     async def get_opportunities(self, username: str, search: Optional[str] = None) -> dict[str, Any]:
         """
