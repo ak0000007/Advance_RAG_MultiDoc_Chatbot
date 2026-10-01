@@ -2,9 +2,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 class Settings(BaseSettings):
-    langsmith_tracing: bool = True
-    langsmith_api_key: str | None = None
-    langsmith_project: str | None = None
     google_api_key: str | None = None
     deepseek_api_key: str | None = None
     openai_api_key: str | None = None
