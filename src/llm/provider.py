@@ -236,7 +236,7 @@ def _create_single_llm(
     model: str | None = None,
     api_key: str | None = None,
     temperature: float = 0.7,
-    max_tokens: int = 300,
+    max_tokens: int = 600,
     **kwargs: Any,
 ) -> BaseChatModel:
 
@@ -297,7 +297,7 @@ def create_llm(
     model: str | None = None,
     api_key: str | None = None,
     temperature: float = 0.7,
-    max_tokens: int = 300,
+    max_tokens: int = 600,
     fallback_provider: str | None = "openai",
     fallback_model: str | None = None,
     fallback_api_key: str | None = None,

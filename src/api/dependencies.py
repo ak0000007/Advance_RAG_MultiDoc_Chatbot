@@ -67,6 +67,7 @@ def get_compiled_graph():
         provider="google",
         fallback_provider=fallback,
         temperature=0.0,
+        max_tokens=2048,
     )
     
     # Pre-configured structured LLMs for nodes
@@ -74,8 +75,10 @@ def get_compiled_graph():
         provider="google",
         fallback_provider=fallback,
         temperature=0.0,
+        max_tokens=2048,
         structured_output=RetrievalGrade,
     )
+
     
 
     # ------------------------------------------------
