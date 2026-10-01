@@ -22,6 +22,8 @@ from typing import Optional
 # ── Salesforce ID patterns ────────────────────────────────────────────────────
 # Standard SF ID is 15 or 18 alphanumeric chars, case-sensitive.
 _SF_ID_RE = re.compile(r'^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$')
+# Salesforce Opportunity IDs always start with the '006' key prefix.
+_SF_OPP_PREFIX = '006'
 
 # Tokens that indicate the LLM is trying to act on multiple records at once.
 # Keep this list conservative — false positives are worse than false negatives.
@@ -34,13 +36,14 @@ _BULK_TOKENS = frozenset([
 
 def single_record_guard(opportunity_id: str) -> Optional[str]:
     """
-    Enforce that exactly ONE valid Salesforce ID was supplied.
+    Enforce that exactly ONE valid Salesforce Opportunity ID was supplied.
 
     Rejects:
       - Comma-separated lists  ("006aaa, 006bbb")
       - Whitespace-separated   ("006aaa 006bbb")
       - Wildcards / globs      ("*", "%", "all")
       - Non-SF-ID patterns
+      - IDs that don't start with the '006' Opportunity prefix
 
     Returns None if the ID is valid, an error string if not.
     """
@@ -74,7 +77,16 @@ def single_record_guard(opportunity_id: str) -> Optional[str]:
     if not _SF_ID_RE.match(single):
         return (
             f"Validation error: '{single}' does not look like a valid "
-            "15- or 18-character Salesforce ID."
+            "15- or 18-character Salesforce ID. "
+            "Use search_salesforce_opportunities to find the correct ID first."
+        )
+
+    # Reject IDs that aren't Opportunity records (must start with '006')
+    if not single.startswith(_SF_OPP_PREFIX):
+        return (
+            f"Validation error: '{single}' is not an Opportunity ID "
+            f"(Opportunity IDs start with '{_SF_OPP_PREFIX}'). "
+            "Use search_salesforce_opportunities to find the correct ID first."
         )
 
     return None  # guard passed

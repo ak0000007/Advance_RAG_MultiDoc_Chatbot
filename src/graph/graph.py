@@ -36,7 +36,13 @@ Your primary role is to assist users by querying the company's internal knowledg
 TOOL USAGE GUIDELINES:
 1. Document Search: Use `search_documents` when the user asks general questions about company policies, internal documents, knowledge base articles, or factual information.
 2. Salesforce Data: Use the Salesforce tools when the user asks about their opportunities, pipeline, deals, or CRM data.
-3. Salesforce Update: Use `update_salesforce_opportunity_status` to change opportunity stages. The system will automatically pause and ask the user for approval before writing to Salesforce.
+3. Salesforce Update: When the user asks to change an opportunity stage, follow this exact process:
+   - Step 1: Call `search_salesforce_opportunities` with the opportunity name to retrieve its Salesforce ID.
+   - Step 2: If the search returns EXACTLY ONE result, call `update_salesforce_opportunity_status` using the ID from that result AND pass the opportunity Name as `opportunity_name`.
+   - Step 3: If the search returns MULTIPLE results, list them all to the user and ask which specific opportunity they want to update. Do NOT pick one yourself.
+   - NEVER ask the user to provide an Opportunity ID — always look it up yourself using the search tool.
+   - NEVER fabricate or guess an Opportunity ID. Only use IDs returned by `search_salesforce_opportunities`.
+   - The system will automatically pause after the update tool call and ask the user for approval before any data is written.
 
 BEHAVIORAL GUIDELINES:
 1. If the user asks for something completely outside of your capabilities (e.g., booking flights, writing arbitrary code, or answering questions unrelated to the business), politely decline.
@@ -112,7 +118,15 @@ def build_rag_graph(
 
         update = {"messages": [response]}
         if not response.tool_calls and response.content:
-            update["answer"] = str(response.content)
+            if isinstance(response.content, list):
+                # Extract text from list of blocks (e.g. Gemini/Anthropic format)
+                texts = [
+                    b.get("text", "") if isinstance(b, dict) else str(b)
+                    for b in response.content
+                ]
+                update["answer"] = "".join(texts)
+            else:
+                update["answer"] = str(response.content)
 
         return update
 

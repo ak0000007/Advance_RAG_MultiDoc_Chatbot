@@ -104,6 +104,7 @@ def build_human_approval_node(salesforce_client):
             "action": "human_approval",
             "message": approval_data.get("message", "Approve this action?"),
             "opportunity_id": approval_data["opportunity_id"],
+            "opportunity_name": approval_data.get("opportunity_name", approval_data["opportunity_id"]),
             "new_status": approval_data["new_status"],
             "idempotency_key": idempotency_key,
             "options": ["Approve", "Reject"],

@@ -4,6 +4,7 @@ SOLID: Receives the client via dependency injection.
 """
 
 import json
+import re
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 
@@ -46,13 +47,23 @@ def build_salesforce_opportunities_tool(salesforce_client):
             results = []
             for item in data:
                 fields = []
-                if item.get("name"):      fields.append(f"Name: {item['name']}")
+                if item.get("id"):        fields.append(f"ID: {item['id']}")
+                # Sanitize name: strip control chars & cap length to prevent prompt injection
+                raw_name = item.get("name", "")
+                safe_name = re.sub(r'[\x00-\x1f\x7f]', '', raw_name)[:120]
+                if safe_name:             fields.append(f"Name: {safe_name}")
                 if item.get("stageName"): fields.append(f"Stage: {item['stageName']}")
                 if item.get("amount"):    fields.append(f"Amount: ${item['amount']}")
                 if item.get("closeDate"): fields.append(f"Close Date: {item['closeDate']}")
                 results.append(" | ".join(fields))
 
-            return "\n".join(results)
+            header = f"Found {len(results)} opportunity(ies)."
+            if len(results) > 1:
+                header += (
+                    " Multiple matches found — if the user wants to update one, "
+                    "ask them to confirm which specific opportunity before proceeding."
+                )
+            return header + "\n" + "\n".join(results)
 
         except Exception as e:
             return f"Failed to execute Salesforce query: {str(e)}"
@@ -79,7 +90,8 @@ def build_salesforce_update_tool(salesforce_client, max_writes_per_session: int 
 
     @tool
     async def update_salesforce_opportunity_status(
-        opportunity_id: str, new_status: str, config: RunnableConfig
+        opportunity_id: str, new_status: str, config: RunnableConfig,
+        opportunity_name: str = "",
     ) -> str:
         """
         Request a Salesforce Opportunity stage update for exactly ONE opportunity.
@@ -91,6 +103,7 @@ def build_salesforce_update_tool(salesforce_client, max_writes_per_session: int 
         Args:
             opportunity_id: Single 18-character Salesforce Opportunity ID.
             new_status: New stage name (e.g. 'Closed Won', 'Negotiation/Review').
+            opportunity_name: Human-readable name of the opportunity (from search results). Optional but preferred.
         """
         sf_username = config.get("configurable", {}).get("sf_username")
         write_count: int = config.get("configurable", {}).get("write_count", 0)
@@ -110,14 +123,18 @@ def build_salesforce_update_tool(salesforce_client, max_writes_per_session: int 
         if err := session_write_cap(write_count, max_writes_per_session):
             return err
 
+        # Use human-readable name for display; fall back to ID if not provided.
+        display_name = opportunity_name.strip() if opportunity_name.strip() else opportunity_id
+
         # Return structured payload. The human_approval graph node reads this,
         # calls interrupt(), and executes the real update only on Approve.
         return json.dumps({
             "__requires_approval__": True,
             "sf_username": sf_username,
             "opportunity_id": opportunity_id,
+            "opportunity_name": display_name,
             "new_status": new_status,
-            "message": f"Change Opportunity '{opportunity_id}' stage to '{new_status}'?",
+            "message": f"Change '{display_name}' stage to '{new_status}'?",
         })
 
     return update_salesforce_opportunity_status
