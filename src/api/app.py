@@ -30,8 +30,12 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
+
+from src.telemetry import setup_langsmith
+setup_langsmith()
 
 from src.api.routes import router
 from src.api.dependencies import get_compiled_graph
@@ -59,3 +63,4 @@ app = FastAPI(
 )
 
 app.include_router(router)
+app.mount("/ui", StaticFiles(directory="src/ui/static", html=True), name="ui")
