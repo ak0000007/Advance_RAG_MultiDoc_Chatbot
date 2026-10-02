@@ -23,6 +23,14 @@ from src.reranking.reranker import CrossEncoderReranker
 from src.rag.chain import build_generation_chain
 from src.tools.document_search import build_document_search_tool
 from src.tools.salesforce_tools import build_salesforce_opportunities_tool, build_salesforce_update_tool
+from src.tools.travel_tools import (
+    build_get_booking_tool,
+    build_get_travel_packages_tool,
+    build_get_payments_tool,
+    build_update_booking_tool,
+    build_update_travel_package_tool,
+    build_update_payment_tool,
+)
 from src.graph.approval import build_human_approval_node
 from src.graph.graph import build_rag_graph
 from src.config import settings
@@ -171,12 +179,14 @@ def get_compiled_graph():
     human_approval_node = None
 
     if sf_client:
-        # Read-only tool: always available when SF is configured
+        # ── Read-only tools: always available when SF is configured ───────────
         tools.append(build_salesforce_opportunities_tool(sf_client))
+        tools.append(build_get_booking_tool(sf_client))
+        tools.append(build_get_travel_packages_tool(sf_client))
+        tools.append(build_get_payments_tool(sf_client))
 
-        # Write tool: only added when WRITES_ENABLED=true (default).
-        # Set WRITES_ENABLED=false in .env to instantly drop all write capability
-        # without touching any other code — safe for audit/review environments.
+        # ── Write tools: only when WRITES_ENABLED=true (default) ─────────────
+        # Set WRITES_ENABLED=false in .env to drop all write capability instantly.
         if settings.writes_enabled:
             tools.append(
                 build_salesforce_update_tool(
@@ -184,6 +194,9 @@ def get_compiled_graph():
                     max_writes_per_session=settings.max_writes_per_session,
                 )
             )
+            tools.append(build_update_booking_tool(sf_client, settings.max_writes_per_session))
+            tools.append(build_update_travel_package_tool(sf_client, settings.max_writes_per_session))
+            tools.append(build_update_payment_tool(sf_client, settings.max_writes_per_session))
             human_approval_node = build_human_approval_node(sf_client)
 
     graph = build_rag_graph(
