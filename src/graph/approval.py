@@ -1,22 +1,22 @@
 """
-Human-in-the-loop approval node for Salesforce Opportunity updates.
+Human-in-the-loop approval node for Salesforce write operations.
 
-SRP: Single responsibility — interrupt / resume cycle for SF stage updates.
-DIP: Receives salesforce_client via factory injection; no direct imports from client module.
-OCP: Adding new approval types requires a new factory, not changes here.
+Handles four action types dispatched from different update tools:
+  - opportunity_update  (legacy, default)
+  - booking_update
+  - travel_package_update
+  - payment_update
 
-Idempotency design:
-  - approval_msg.tool_call_id is a stable, unique ID for every LLM tool-call decision.
-  - It is passed as the Idempotency-Key HTTP header to the Salesforce client.
-  - The key NEVER changes between retries of the same approval (LangGraph re-runs the
-    node with the same checkpointed state), so duplicate network calls are deduplicated
-    on the server side.
-  - If tool_call_id is somehow absent, we fall back to a deterministic composite key
-    (thread_id + opportunity_id + new_status) rather than sending no key or a random one.
+SRP: Single responsibility — interrupt / resume cycle for SF updates.
+DIP: Receives salesforce_client via factory injection.
+OCP: New action types → add a branch in _execute_update only.
+
+Idempotency:
+  - tool_call_id is stable per LLM decision, unchanged on re-runs.
+  - Falls back to SHA-256(thread_id + record_id + action_type).
 
 Write counter:
-  - write_count in state is incremented only on a confirmed successful write.
-  - This is the single place that writes; the tool's session_write_cap reads it.
+  - write_count in state incremented ONLY on confirmed successful write.
 """
 
 import hashlib
@@ -27,38 +27,62 @@ from langgraph.types import interrupt
 
 from src.graph.state import RAGState
 
-# Sentinel: no-op for add_messages
 _NO_UPDATE: dict = {}
 
 
 def _build_idempotency_key(
     tool_call_id: str | None,
     thread_id: str | None,
-    opportunity_id: str,
-    new_status: str,
+    record_id: str,
+    action_suffix: str,
 ) -> str:
-    """
-    Build a stable idempotency key.
-
-    Primary  : tool_call_id  — unique per LLM decision, stable across node re-runs.
-    Fallback : SHA-256 of thread_id + opportunity_id + new_status.
-               Deterministic and collision-resistant even without a tool_call_id.
-
-    A random UUID fallback (uuid4) would be WRONG: it would generate a different
-    key every retry, defeating the entire purpose of idempotency.
-    """
     if tool_call_id:
         return tool_call_id
-
-    raw = f"{thread_id or ''}:{opportunity_id}:{new_status}"
+    raw = f"{thread_id or ''}:{record_id}:{action_suffix}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def build_human_approval_node(salesforce_client):
     """
     Factory: returns an async graph node with salesforce_client closed over.
-    Call this only when SF is configured; otherwise omit the node entirely.
+    Handles all action types that carry __requires_approval__ in their payload.
     """
+
+    async def _execute_update(action_type: str, approval_data: dict, idempotency_key: str) -> dict:
+        """Call the correct client method based on action_type. Returns SF response dict."""
+        username = approval_data["sf_username"]
+        action_type = action_type or "opportunity_update"
+
+        if action_type == "opportunity_update":
+            return await salesforce_client.update_opportunity_status(
+                username=username,
+                opportunity_id=approval_data["opportunity_id"],
+                new_status=approval_data["new_status"],
+                idempotency_key=idempotency_key,
+            )
+        elif action_type == "booking_update":
+            return await salesforce_client.update_booking(
+                username=username,
+                booking_id=approval_data["record_id"],
+                update_fields=approval_data.get("update_fields", {}),
+                idempotency_key=idempotency_key,
+            )
+        elif action_type == "travel_package_update":
+            return await salesforce_client.update_travel_package(
+                username=username,
+                package_id=approval_data["record_id"],
+                update_fields=approval_data.get("update_fields", {}),
+                idempotency_key=idempotency_key,
+            )
+        elif action_type == "payment_update":
+            return await salesforce_client.update_payment(
+                username=username,
+                payment_id=approval_data["record_id"],
+                update_fields=approval_data.get("update_fields", {}),
+                idempotency_key=idempotency_key,
+            )
+        else:
+            return {"isSuccess": False, "message": f"Unknown action_type: '{action_type}'."}
 
     async def human_approval_node(state: RAGState, config: RunnableConfig) -> dict:
         """
@@ -88,24 +112,38 @@ def build_human_approval_node(salesforce_client):
         if approval_msg is None or approval_data is None:
             return _NO_UPDATE
 
+        action_type = approval_data.get("action_type") or "opportunity_update"
+
+        # Resolve generic record_id / record_name (new types) or legacy opportunity_id fields
+        record_id = approval_data.get("record_id") or approval_data.get("opportunity_id", "")
+        record_name = (
+            approval_data.get("record_name")
+            or approval_data.get("opportunity_name")
+            or record_id
+        )
+        # action_suffix used for fallback idempotency key
+        action_suffix = approval_data.get("new_status") or action_type
+
         # ── Build idempotency key before interrupt() ─────────────────────────
-        # Must be before interrupt() so the key is identical on first run
-        # and on every re-run after resume — derived from stable state/config.
         thread_id: str | None = config.get("configurable", {}).get("thread_id")
         idempotency_key = _build_idempotency_key(
             tool_call_id=getattr(approval_msg, "tool_call_id", None),
             thread_id=thread_id,
-            opportunity_id=approval_data["opportunity_id"],
-            new_status=approval_data["new_status"],
+            record_id=record_id,
+            action_suffix=action_suffix,
         )
 
         # ── Freeze graph — returns resume value on second execution ─────────
         decision = interrupt({
             "action": "human_approval",
             "message": approval_data.get("message", "Approve this action?"),
-            "opportunity_id": approval_data["opportunity_id"],
-            "opportunity_name": approval_data.get("opportunity_name", approval_data["opportunity_id"]),
-            "new_status": approval_data["new_status"],
+            "record_id": record_id,
+            "record_name": record_name,
+            # Keep legacy keys for existing frontend/clients
+            "opportunity_id": approval_data.get("opportunity_id", record_id),
+            "opportunity_name": approval_data.get("opportunity_name", record_name),
+            "new_status": approval_data.get("new_status", ""),
+            "action_type": action_type,
             "idempotency_key": idempotency_key,
             "options": ["Approve", "Reject"],
         })
@@ -121,12 +159,7 @@ def build_human_approval_node(salesforce_client):
             )
         elif decision == "Approve":
             try:
-                response = await salesforce_client.update_opportunity_status(
-                    username=approval_data["sf_username"],
-                    opportunity_id=approval_data["opportunity_id"],
-                    new_status=approval_data["new_status"],
-                    idempotency_key=idempotency_key,
-                )
+                response = await _execute_update(action_type, approval_data, idempotency_key)
                 if response.get("isSuccess"):
                     result = f"Success: {response.get('message')}"
                     write_success = True
@@ -138,13 +171,9 @@ def build_human_approval_node(salesforce_client):
             except Exception as e:
                 result = f"Failed to execute Salesforce update: {str(e)}"
         else:  # Reject
-            result = (
-                f"Action aborted: User rejected the update to "
-                f"'{approval_data['new_status']}'."
-            )
+            result = f"Action aborted: User rejected — '{record_name}'."
 
         # ── Replace approval-request msg with real outcome ──────────────────
-        # Matching id causes add_messages to overwrite, not append.
         updated_msg = ToolMessage(
             content=result,
             tool_call_id=approval_msg.tool_call_id,
@@ -152,9 +181,6 @@ def build_human_approval_node(salesforce_client):
         )
 
         update: dict = {"messages": [updated_msg]}
-
-        # Increment session write counter only on a confirmed successful write.
-        # Single authoritative place — keeps tool's session_write_cap in sync.
         if write_success:
             update["write_count"] = state.get("write_count", 0) + 1
 
