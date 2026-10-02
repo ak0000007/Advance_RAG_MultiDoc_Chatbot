@@ -34,26 +34,26 @@ _BULK_TOKENS = frozenset([
 ])
 
 
-def single_record_guard(opportunity_id: str) -> Optional[str]:
+def single_record_guard(record_id: str, expected_prefix: Optional[str] = _SF_OPP_PREFIX) -> Optional[str]:
     """
-    Enforce that exactly ONE valid Salesforce Opportunity ID was supplied.
+    Enforce that exactly ONE valid Salesforce ID was supplied.
 
     Rejects:
       - Comma-separated lists  ("006aaa, 006bbb")
       - Whitespace-separated   ("006aaa 006bbb")
       - Wildcards / globs      ("*", "%", "all")
       - Non-SF-ID patterns
-      - IDs that don't start with the '006' Opportunity prefix
+      - IDs that don't match expected_prefix (defaults to '006' Opportunity prefix)
 
     Returns None if the ID is valid, an error string if not.
     """
-    raw = opportunity_id.strip()
+    raw = record_id.strip()
 
     # Reject obvious multi-record separators
     if ',' in raw or ';' in raw:
         return (
             "Hard cap: this tool updates exactly ONE record per call. "
-            "Multiple IDs were supplied. Please call the tool once per opportunity."
+            "Multiple IDs were supplied. Please call the tool once per record."
         )
 
     # Reject if more than one whitespace-separated token
@@ -61,7 +61,7 @@ def single_record_guard(opportunity_id: str) -> Optional[str]:
     if len(tokens) > 1:
         return (
             "Hard cap: this tool updates exactly ONE record per call. "
-            f"Received {len(tokens)} tokens. Call the tool once per opportunity."
+            f"Received {len(tokens)} tokens. Call the tool once per record."
         )
 
     single = tokens[0] if tokens else raw
@@ -70,23 +70,21 @@ def single_record_guard(opportunity_id: str) -> Optional[str]:
     if single in ('*', '%', 'all', 'ALL'):
         return (
             "Hard cap: wildcard or 'all' is not allowed. "
-            "Provide a single Salesforce Opportunity ID."
+            "Provide a single Salesforce ID."
         )
 
     # Reject if it doesn't look like a SF ID at all
     if not _SF_ID_RE.match(single):
         return (
             f"Validation error: '{single}' does not look like a valid "
-            "15- or 18-character Salesforce ID. "
-            "Use search_salesforce_opportunities to find the correct ID first."
+            "15- or 18-character Salesforce ID."
         )
 
-    # Reject IDs that aren't Opportunity records (must start with '006')
-    if not single.startswith(_SF_OPP_PREFIX):
+    # Reject IDs that don't match expected prefix
+    if expected_prefix and not single.startswith(expected_prefix):
         return (
-            f"Validation error: '{single}' is not an Opportunity ID "
-            f"(Opportunity IDs start with '{_SF_OPP_PREFIX}'). "
-            "Use search_salesforce_opportunities to find the correct ID first."
+            f"Validation error: '{single}' does not start with expected prefix "
+            f"'{expected_prefix}'."
         )
 
     return None  # guard passed
