@@ -1,3 +1,9 @@
+from dotenv import load_dotenv
+load_dotenv()
+
+from src.telemetry import setup_langsmith
+setup_langsmith()
+
 import asyncio
 from src.ingestion.loader import MultiDocumentLoader
 from src.chunking.splitter import DocumentChunker
