@@ -24,15 +24,14 @@ Remediate Tier 1 (P0) security vulnerabilities and critical pipeline crashes fro
 - [x] **Evaluation Benchmark Harness**: Built [`evals/mock_salesforce.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/evals/mock_salesforce.py), 16-case golden dataset in [`evals/golden_dataset.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/evals/golden_dataset.py), and runner [`evals/runner.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/evals/runner.py) achieving 100.0% accuracy across Opportunities, Bookings, Packages, Payments, and Safety Guards.
 - [x] **CI Pipeline Restored**: Fixed missing `pythonpath` in [`pyproject.toml`](file:///home/akhilsaini/Advance_RAG_Chatbot/pyproject.toml) and workflow runner invocation in [`.github/workflows/ci.yml`](file:///home/akhilsaini/Advance_RAG_Chatbot/.github/workflows/ci.yml); GitHub Actions run `37436740796` all green (11/11 tests pass).
 - [x] **Agent Routing Evaluation Harness**: Implemented [`evals/routing/`](file:///home/akhilsaini/Advance_RAG_Chatbot/evals/routing/) (dataset, judge, runner) with 24 natural-language cases against live LLM; achieved **75.0% empirical accuracy**, with `@pytest.mark.routing` verified passing in [`tests/test_routing_eval.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_routing_eval.py).
+- [x] **Enterprise Write Audit Logging & Telemetry (H10 Fixed)**: Built [`src/audit/log.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/audit/log.py) with `write_audit_log` PostgreSQL table, wired proposal/decision/outcome audits into [`src/graph/approval.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/approval.py), shared connection pool in [`src/graph/memory.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/memory.py) & [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py), exposed authenticated `GET /audit/{thread_id}` and unauthenticated `GET /metrics` in [`src/api/routes.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/routes.py), verified 7/7 tests in [`tests/test_audit_log.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_audit_log.py).
 
 ---
 
 ## In Progress / Pending (P0 Backlog)
 - [ ] **H2 + H3: Ingestion Sync**: Dual-index Qdrant + [`BM25Store`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/retrieval/bm25_store.py) with deterministic content-hash IDs in [`ingest.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/ingest.py).
-- [ ] **H10: Postgres Pool Lifecycle**: Add `await pool.open()` in FastAPI lifespan / [`src/graph/memory.py:26`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/memory.py#L26-L31).
 
 ---
 
 ## Next Immediate Action
-1. Populate BM25 store during `ingest.py` (H2/H3).
-2. Wire `await pool.open()` and graceful shutdown for Postgres pool in FastAPI lifespan (H10).
+1. Populate BM25 store during `ingest.py` with deterministic content-hash IDs (H2/H3).
