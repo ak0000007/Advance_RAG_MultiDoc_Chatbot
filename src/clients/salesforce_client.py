@@ -22,6 +22,15 @@ _TOKEN_TTL = 240
 # resp.json() then decodes the outer envelope, returning a Python str.
 # This helper unwraps that second layer when present.
 _SF_ID_RE = re.compile(r'^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$')
+_ALLOWED_SOBJECTS = frozenset({
+    "Booking__c",
+    "Travel_Booking__c",
+    "Travel_Package__c",
+    "Payment__c",
+    "Opportunity",
+    "Account",
+    "Contact",
+})
 
 
 def _parse_api_response(resp: httpx.Response) -> dict[str, Any]:
@@ -149,17 +158,24 @@ class SalesforceAsyncClient:
 
     async def _resolve_id_by_name(self, token: str, sobject: str, name: str) -> Optional[str]:
         """SOQL lookup: record Name → Salesforce Id."""
+        if sobject not in _ALLOWED_SOBJECTS:
+            raise ValueError(f"Invalid sobject for query resolution: '{sobject}'")
+        clean_name = re.sub(r'[\x00-\x1f\x7f]', '', name).strip()[:255]
+        safe_name = clean_name.replace('\\', '\\\\').replace("'", "\\'")
         url = f"{self.domain}/services/data/v60.0/query"
-        safe_name = name.replace("'", "\\'")
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(
                 url,
                 headers={"Authorization": f"Bearer {token}"},
                 params={"q": f"SELECT Id FROM {sobject} WHERE Name = '{safe_name}' LIMIT 1"},
             )
+            if resp.status_code != 200:
+                return None
             data = resp.json()
-            records = data.get("records", [])
-            return records[0]["Id"] if records else None
+            if isinstance(data, dict):
+                records = data.get("records", [])
+                return records[0]["Id"] if records else None
+            return None
 
     # ── Booking APIs ─────────────────────────────────────────────────────────
 
