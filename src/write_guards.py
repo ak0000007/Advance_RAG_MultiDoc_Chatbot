@@ -101,7 +101,7 @@ def bulk_intent_guard(new_status: str, raw_user_message: Optional[str] = None) -
     combined = (new_status + " " + (raw_user_message or "")).lower()
 
     for token in _BULK_TOKENS:
-        if token in combined:
+        if re.search(r'\b' + re.escape(token) + r'\b', combined):
             return (
                 f"Hard cap: bulk operations are not allowed (detected '{token}'). "
                 "I can update opportunities one at a time. "
