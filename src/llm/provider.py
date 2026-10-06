@@ -82,6 +82,7 @@ def _create_gemini(
         "model": model,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "max_retries": 1,
     }
 
     google_api_key = (

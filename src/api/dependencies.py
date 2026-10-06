@@ -50,18 +50,14 @@ def get_salesforce_client() -> SalesforceAsyncClient | None:
         domain=settings.sf_domain
     )
 
-@lru_cache
-def get_compiled_graph():
+_DEFAULT_CLIENT = object()
+
+
+def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None):
     """
-    Build and return the compiled LangGraph once.
-
-    Everything is wired here:
-        LLM → Embeddings → Stores → Retrievers →
-        Reranker → Generation chain → Graph
-
-    Cached — subsequent calls return the same instance.
+    Build and return compiled LangGraph with injected or default Salesforce client.
+    Reuses all construction logic so production and evals share a single code path.
     """
-
     # ------------------------------------------------
     # 1. LLM (Gemini + DeepSeek fallback)
     # ------------------------------------------------
@@ -86,8 +82,6 @@ def get_compiled_graph():
         max_tokens=2048,
         structured_output=RetrievalGrade,
     )
-
-    
 
     # ------------------------------------------------
     # 2. Embeddings
@@ -116,9 +110,6 @@ def get_compiled_graph():
 
     # ------------------------------------------------
     # 4. BM25 sparse retriever
-    #    ponytail: BM25 starts empty at server boot.
-    #    If you need pre-loaded BM25, call
-    #    bm25.add_documents() here with your corpus.
     # ------------------------------------------------
 
     bm25_store = BM25Store()
@@ -154,8 +145,13 @@ def get_compiled_graph():
 
     generation_chain = build_generation_chain(llm)
 
-    from src.graph.memory import get_checkpointer
-    checkpointer = get_checkpointer(settings.postgres_url)
+    if checkpointer is None:
+        try:
+            from src.graph.memory import get_checkpointer
+            checkpointer = get_checkpointer(settings.postgres_url)
+        except Exception:
+            from langgraph.checkpoint.memory import MemorySaver
+            checkpointer = MemorySaver()
 
     # ------------------------------------------------
     # 8. Build Tools and Compile Graph
@@ -174,7 +170,9 @@ def get_compiled_graph():
         settings.max_retrieval_attempts
     )
 
-    sf_client = get_salesforce_client()
+    if sf_client is _DEFAULT_CLIENT:
+        sf_client = get_salesforce_client()
+
     tools = [qdrant_tool]
     human_approval_node = None
 
@@ -207,3 +205,18 @@ def get_compiled_graph():
     )
 
     return graph
+
+
+@lru_cache
+def get_compiled_graph():
+    """
+    Build and return the compiled LangGraph once.
+
+    Everything is wired here:
+        LLM → Embeddings → Stores → Retrievers →
+        Reranker → Generation chain → Graph
+
+    Cached — subsequent calls return the same instance.
+    """
+    return build_graph_with_client()
+
