@@ -67,7 +67,7 @@ Determine whether the retrieved context is relevant.
                 """,
             ),
         ]
-    )
+    ).partial(format_instructions=parser.get_format_instructions())
 
     # Note: `llm` here should already be configured with `with_structured_output(RetrievalGrade)`
     # by dependencies.py, but we'll try to add it if it's not.
