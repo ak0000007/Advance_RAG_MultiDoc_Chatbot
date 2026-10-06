@@ -26,6 +26,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
 
 from src.graph.state import RAGState
+from src.audit.log import record_proposed, record_decision, record_outcome
 
 _NO_UPDATE: dict = {}
 
@@ -42,7 +43,7 @@ def _build_idempotency_key(
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def build_human_approval_node(salesforce_client):
+def build_human_approval_node(salesforce_client, pool=None):
     """
     Factory: returns an async graph node with salesforce_client closed over.
     Handles all action types that carry __requires_approval__ in their payload.
@@ -125,13 +126,33 @@ def build_human_approval_node(salesforce_client):
         action_suffix = approval_data.get("new_status") or action_type
 
         # ── Build idempotency key before interrupt() ─────────────────────────
-        thread_id: str | None = config.get("configurable", {}).get("thread_id")
+        thread_id: str | None = config.get("configurable", {}).get("thread_id") if config else None
         idempotency_key = _build_idempotency_key(
             tool_call_id=getattr(approval_msg, "tool_call_id", None),
             thread_id=thread_id,
             record_id=record_id,
             action_suffix=action_suffix,
         )
+
+        # ── Audit: record proposed write before interrupt ───────────────────
+        if pool is not None:
+            sf_user = (
+                approval_data.get("sf_username")
+                or (config.get("configurable", {}).get("sf_username") if config else None)
+                or state.get("sf_username")
+                or ""
+            )
+            await record_proposed(
+                pool=pool,
+                thread_id=thread_id or "",
+                sf_username=sf_user,
+                action_type=action_type,
+                record_id=record_id,
+                record_name=record_name,
+                idempotency_key=idempotency_key,
+                proposed_payload=approval_data,
+                status="proposed",
+            )
 
         # ── Freeze graph — returns resume value on second execution ─────────
         decision = interrupt({
@@ -148,6 +169,16 @@ def build_human_approval_node(salesforce_client):
             "options": ["Approve", "Reject"],
         })
 
+        # ── Audit: record decision ──────────────────────────────────────────
+        decision_status = "approved" if decision == "Approve" else ("rejected" if decision == "Reject" else "aborted")
+        if pool is not None:
+            await record_decision(
+                pool=pool,
+                idempotency_key=idempotency_key,
+                decision=str(decision),
+                status=decision_status,
+            )
+
         # ── Guard: only accept canonical decision values ─────────────────────
         write_success = False
         result: str
@@ -157,21 +188,49 @@ def build_human_approval_node(salesforce_client):
                 f"Invalid decision '{decision}'. "
                 "Must be 'Approve' or 'Reject'. Action aborted."
             )
+            try:
+                from src.telemetry_metrics import record_write_attempt
+                record_write_attempt(action_type=action_type, status="aborted")
+            except Exception:
+                pass
         elif decision == "Approve":
             try:
                 response = await _execute_update(action_type, approval_data, idempotency_key)
                 if response.get("isSuccess"):
                     result = f"Success: {response.get('message')}"
                     write_success = True
+                    outcome_status = "executed"
                 else:
                     result = (
                         f"Failed: {response.get('message')} "
                         f"(HTTP {response.get('statusCode')})"
                     )
+                    outcome_status = "failed"
+                if pool is not None:
+                    await record_outcome(
+                        pool=pool,
+                        idempotency_key=idempotency_key,
+                        result=response,
+                        status=outcome_status,
+                        action_type=action_type,
+                    )
             except Exception as e:
                 result = f"Failed to execute Salesforce update: {str(e)}"
+                if pool is not None:
+                    await record_outcome(
+                        pool=pool,
+                        idempotency_key=idempotency_key,
+                        result={"error": str(e)},
+                        status="failed",
+                        action_type=action_type,
+                    )
         else:  # Reject
             result = f"Action aborted: User rejected — '{record_name}'."
+            try:
+                from src.telemetry_metrics import record_write_attempt
+                record_write_attempt(action_type=action_type, status="rejected")
+            except Exception:
+                pass
 
         # ── Replace approval-request msg with real outcome ──────────────────
         updated_msg = ToolMessage(

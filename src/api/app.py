@@ -44,8 +44,16 @@ from src.api.dependencies import get_compiled_graph
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Eagerly build graph at startup so first request is fast.
+    Eagerly build graph and initialize shared DB pool + audit tables at startup.
     """
+    from src.api.dependencies import get_db_pool
+    from src.audit.log import init_audit_table
+
+    pool = get_db_pool()
+    if pool is not None:
+        await pool.open()
+        await init_audit_table(pool)
+
     graph = get_compiled_graph()
     if hasattr(graph, "checkpointer") and hasattr(graph.checkpointer, "setup"):
         import inspect
@@ -54,6 +62,10 @@ async def lifespan(app: FastAPI):
         else:
             graph.checkpointer.setup()
     yield
+
+    if pool is not None:
+        await pool.close()
+
 
 
 app = FastAPI(

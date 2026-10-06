@@ -8,6 +8,33 @@ uses Postgres. Otherwise falls back to MemorySaver.
 from typing import Optional
 from langchain_core.runnables import RunnableConfig
 
+_SHARED_POOL = None
+
+
+def get_postgres_pool(postgres_url: Optional[str] = None):
+    """
+    Return the shared AsyncConnectionPool singleton if postgres_url is configured.
+    Uses open=False so it can be instantiated in sync context and opened in async lifespan.
+    """
+    global _SHARED_POOL
+    if not postgres_url:
+        return None
+    if _SHARED_POOL is None:
+        try:
+            from psycopg_pool import AsyncConnectionPool
+
+            _SHARED_POOL = AsyncConnectionPool(
+                conninfo=postgres_url,
+                min_size=1,
+                max_size=20,
+                open=False,
+                kwargs={"autocommit": True},
+            )
+        except ImportError:
+            return None
+    return _SHARED_POOL
+
+
 def get_checkpointer(postgres_url: Optional[str] = None):
     """
     Factory for the checkpointer.
@@ -18,18 +45,10 @@ def get_checkpointer(postgres_url: Optional[str] = None):
     if postgres_url:
         try:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-            from psycopg_pool import AsyncConnectionPool
-            
-            # Use AsyncConnectionPool for async IO and thread safety.
-            # Setup (DB creation) is deferred to the caller (e.g., FastAPI lifespan)
-            # because it is an async method and this factory remains sync to support @lru_cache.
-            pool = AsyncConnectionPool(
-                conninfo=postgres_url,
-                max_size=20,
-                kwargs={"autocommit": True}
-            )
-            saver = AsyncPostgresSaver(pool)
-            return saver
+
+            pool = get_postgres_pool(postgres_url)
+            if pool is not None:
+                return AsyncPostgresSaver(pool)
         except ImportError:
             print("WARNING: langgraph-checkpoint-postgres or psycopg not installed. Falling back to MemorySaver.")
     

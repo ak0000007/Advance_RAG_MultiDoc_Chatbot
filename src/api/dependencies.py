@@ -53,7 +53,7 @@ def get_salesforce_client() -> SalesforceAsyncClient | None:
 _DEFAULT_CLIENT = object()
 
 
-def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None):
+def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=None):
     """
     Build and return compiled LangGraph with injected or default Salesforce client.
     Reuses all construction logic so production and evals share a single code path.
@@ -176,6 +176,13 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None):
     tools = [qdrant_tool]
     human_approval_node = None
 
+    if pool is None and settings.postgres_url:
+        try:
+            from src.graph.memory import get_postgres_pool
+            pool = get_postgres_pool(settings.postgres_url)
+        except Exception:
+            pool = None
+
     if sf_client:
         # ── Read-only tools: always available when SF is configured ───────────
         tools.append(build_salesforce_opportunities_tool(sf_client))
@@ -195,7 +202,7 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None):
             tools.append(build_update_booking_tool(sf_client, settings.max_writes_per_session))
             tools.append(build_update_travel_package_tool(sf_client, settings.max_writes_per_session))
             tools.append(build_update_payment_tool(sf_client, settings.max_writes_per_session))
-            human_approval_node = build_human_approval_node(sf_client)
+            human_approval_node = build_human_approval_node(sf_client, pool=pool)
 
     graph = build_rag_graph(
         llm=llm,
@@ -219,4 +226,19 @@ def get_compiled_graph():
     Cached — subsequent calls return the same instance.
     """
     return build_graph_with_client()
+
+
+def get_db_pool():
+    """
+    Return the shared PostgreSQL connection pool singleton.
+    Uses settings.postgres_url.
+    """
+    if not settings.postgres_url:
+        return None
+    try:
+        from src.graph.memory import get_postgres_pool
+        return get_postgres_pool(settings.postgres_url)
+    except Exception:
+        return None
+
 
