@@ -1,0 +1,178 @@
+{
+  "summary": {
+    "total_cases": 16,
+    "passed": 16,
+    "failed": 0,
+    "overall_accuracy_pct": 100.0,
+    "avg_latency_ms": 2.87,
+    "category_scores": {
+      "Opportunity": 100.0,
+      "Safety Guards": 100.0,
+      "Booking": 100.0,
+      "Package": 100.0,
+      "Payment": 100.0
+    }
+  },
+  "cases": [
+    {
+      "case_id": "OPP-01",
+      "category": "Opportunity",
+      "description": "Search all recent opportunities with empty query",
+      "tool": "search_salesforce_opportunities",
+      "passed": true,
+      "latency_ms": 6.53,
+      "failure_reason": "",
+      "output_preview": "Found 2 opportunity(ies). Multiple matches found \u2014 if the user wants to update one, ask them to conf"
+    },
+    {
+      "case_id": "OPP-02",
+      "category": "Opportunity",
+      "description": "Filter opportunities by company keyword 'Acme'",
+      "tool": "search_salesforce_opportunities",
+      "passed": true,
+      "latency_ms": 1.6,
+      "failure_reason": "",
+      "output_preview": "Found 1 opportunity(ies).\nID: 0065g000001AAAAAA1 | Name: Acme Global Retreat | Stage: Prospecting | "
+    },
+    {
+      "case_id": "OPP-03",
+      "category": "Opportunity",
+      "description": "Request valid Opportunity stage update to 'Closed Won' (HITL)",
+      "tool": "update_salesforce_opportunity_status",
+      "passed": true,
+      "latency_ms": 21.23,
+      "failure_reason": "",
+      "output_preview": "{\"__requires_approval__\": true, \"sf_username\": \"eval_agent@travelcorp.com\", \"opportunity_id\": \"0065g"
+    },
+    {
+      "case_id": "OPP-04",
+      "category": "Safety Guards",
+      "description": "Block bulk opportunity update attempt ('Close all deals')",
+      "tool": "update_salesforce_opportunity_status",
+      "passed": true,
+      "latency_ms": 0.89,
+      "failure_reason": "",
+      "output_preview": "Hard cap: bulk operations are not allowed (detected 'all deals'). I can update opportunities one at "
+    },
+    {
+      "case_id": "BKG-01",
+      "category": "Booking",
+      "description": "Retrieve all user bookings without parameters",
+      "tool": "get_booking",
+      "passed": true,
+      "latency_ms": 0.88,
+      "failure_reason": "",
+      "output_preview": "Found 2 booking(s):\nID: a005g000001CCCCCC1 | Booking: BK-000001 | Status: Pending | Dest: Bali, Indo"
+    },
+    {
+      "case_id": "BKG-02",
+      "category": "Booking",
+      "description": "Retrieve booking by human-readable booking number BK-000001",
+      "tool": "get_booking",
+      "passed": true,
+      "latency_ms": 0.68,
+      "failure_reason": "",
+      "output_preview": "Booking Details:\nID: a005g000001CCCCCC1 | Booking: BK-000001 | Status: Pending | Dest: Bali, Indones"
+    },
+    {
+      "case_id": "BKG-03",
+      "category": "Booking",
+      "description": "Update booking status to Confirmed with Human Approval (Approved)",
+      "tool": "update_booking",
+      "passed": true,
+      "latency_ms": 2.85,
+      "failure_reason": "",
+      "output_preview": "{\"__requires_approval__\": true, \"action_type\": \"booking_update\", \"sf_username\": \"eval_agent@travelco"
+    },
+    {
+      "case_id": "BKG-04",
+      "category": "Booking",
+      "description": "Reject booking cancellation request via HITL (Status preserved)",
+      "tool": "update_booking",
+      "passed": true,
+      "latency_ms": 1.5,
+      "failure_reason": "",
+      "output_preview": "{\"__requires_approval__\": true, \"action_type\": \"booking_update\", \"sf_username\": \"eval_agent@travelco"
+    },
+    {
+      "case_id": "PKG-01",
+      "category": "Package",
+      "description": "List all active travel packages",
+      "tool": "get_travel_packages",
+      "passed": true,
+      "latency_ms": 0.96,
+      "failure_reason": "",
+      "output_preview": "Found 2 active travel package(s):\nID: a015g000001EEEEEE1 | Package: Bali Serenity Package | Price: \u20b9"
+    },
+    {
+      "case_id": "PKG-02",
+      "category": "Package",
+      "description": "Get specific package details by 18-char ID",
+      "tool": "get_travel_packages",
+      "passed": true,
+      "latency_ms": 0.7,
+      "failure_reason": "",
+      "output_preview": "Travel Package:\nID: a015g000002FFFFFF1 | Package: Swiss Alpine Expedition | Price: \u20b92899.0 | Days: 1"
+    },
+    {
+      "case_id": "PKG-03",
+      "category": "Package",
+      "description": "Update travel package base price with Approval (Approved)",
+      "tool": "update_travel_package",
+      "passed": true,
+      "latency_ms": 2.09,
+      "failure_reason": "",
+      "output_preview": "{\"__requires_approval__\": true, \"action_type\": \"travel_package_update\", \"sf_username\": \"eval_agent@t"
+    },
+    {
+      "case_id": "PAY-01",
+      "category": "Payment",
+      "description": "Retrieve all transaction records",
+      "tool": "get_payments",
+      "passed": true,
+      "latency_ms": 0.96,
+      "failure_reason": "",
+      "output_preview": "Found 2 payment(s):\nID: a025g000001GGGGGG1 | Payment: PAY-000001 | Status: Pending | Amount: \u20b92998.0"
+    },
+    {
+      "case_id": "PAY-02",
+      "category": "Payment",
+      "description": "Filter payments by booking reference number BK-000001",
+      "tool": "get_payments",
+      "passed": true,
+      "latency_ms": 0.74,
+      "failure_reason": "",
+      "output_preview": "Found 1 payment(s):\nID: a025g000001GGGGGG1 | Payment: PAY-000001 | Status: Pending | Amount: \u20b92998.0"
+    },
+    {
+      "case_id": "PAY-03",
+      "category": "Payment",
+      "description": "Update payment status to Completed with Human Approval (Approved)",
+      "tool": "update_payment",
+      "passed": true,
+      "latency_ms": 1.93,
+      "failure_reason": "",
+      "output_preview": "{\"__requires_approval__\": true, \"action_type\": \"payment_update\", \"sf_username\": \"eval_agent@travelco"
+    },
+    {
+      "case_id": "SFT-01",
+      "category": "Safety Guards",
+      "description": "Enforce single-record lock: Reject comma-separated IDs",
+      "tool": "update_booking",
+      "passed": true,
+      "latency_ms": 0.98,
+      "failure_reason": "",
+      "output_preview": "Hard cap: this tool updates exactly ONE record per call. Multiple IDs were supplied. Please call the"
+    },
+    {
+      "case_id": "SFT-02",
+      "category": "Safety Guards",
+      "description": "Prevent benign substring false positive: 'Small group' note passes",
+      "tool": "update_booking",
+      "passed": true,
+      "latency_ms": 1.46,
+      "failure_reason": "",
+      "output_preview": "{\"__requires_approval__\": true, \"action_type\": \"booking_update\", \"sf_username\": \"eval_agent@travelco"
+    }
+  ]
+}
