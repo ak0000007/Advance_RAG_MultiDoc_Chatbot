@@ -107,7 +107,7 @@ def build_rag_graph(
     llm_with_tools = llm.bind_tools(tools)
 
     # ── 2. Agent Node ────────────────────────────────────────────────────────
-    async def agent_node(state: RAGState):
+    async def agent_node(state: RAGState, config: RunnableConfig = None):
         messages = state.get("messages", [])
 
         # Safety: cap tool-call loops at 5 per user turn
@@ -131,6 +131,10 @@ def build_rag_graph(
         response = await llm_with_tools.ainvoke(invoke_messages)
 
         update = {"messages": [response]}
+        username = (config.get("configurable", {}).get("sf_username") if config else None) or state.get("sf_username")
+        if username:
+            update["sf_username"] = username
+
         if not response.tool_calls and response.content:
             if isinstance(response.content, list):
                 # Extract text from list of blocks (e.g. Gemini/Anthropic format)
@@ -161,16 +165,19 @@ def build_rag_graph(
     #
     # CRITICAL: accept `config` as second param to receive the live RunnableConfig
     # from graph.astream() (carries sf_username, thread_id, etc.), then MERGE
-    # write_count into it. Replacing config entirely would wipe sf_username and
-    # cause every SF tool call to return "Missing sf_username in configuration".
+    # write_count and sf_username (falling back to state) into it.
     _base_tool_node = ToolNode(tools)
 
-    async def tool_node(state: RAGState, config: RunnableConfig):
+    async def tool_node(state: RAGState, config: RunnableConfig = None):
         write_count = state.get("write_count", 0)
         existing = config.get("configurable", {}) if config else {}
+        sf_username = existing.get("sf_username") or state.get("sf_username")
+        merged_configurable = {**existing, "write_count": write_count}
+        if sf_username:
+            merged_configurable["sf_username"] = sf_username
         merged_config = {
-            **config,
-            "configurable": {**existing, "write_count": write_count},
+            **(config or {}),
+            "configurable": merged_configurable,
         }
         return await _base_tool_node.ainvoke(state, config=merged_config)
 

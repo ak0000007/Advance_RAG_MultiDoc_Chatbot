@@ -50,6 +50,9 @@ class RAGState(TypedDict, total=False):
     # Checked by the update tool before initiating any approval flow.
     write_count: int
 
+    # Authenticated user context: persisted across interrupts and thread turns.
+    sf_username: str
+
     # -----------------------------------------------------
     # Answer evaluation
     # -----------------------------------------------------
