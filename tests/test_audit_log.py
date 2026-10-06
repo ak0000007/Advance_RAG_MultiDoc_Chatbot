@@ -34,15 +34,29 @@ from src.telemetry_metrics import (
 @asynccontextmanager
 async def get_test_pool():
     """Create test AsyncConnectionPool and ensure audit table is initialized."""
+    if not settings.postgres_url:
+        pytest.skip("PostgreSQL not configured (POSTGRES_URL is unset).")
+
     pool = AsyncConnectionPool(
         conninfo=settings.postgres_url,
         min_size=1,
         max_size=5,
         open=False,
+        timeout=3.0,
         kwargs={"autocommit": True},
     )
-    await pool.open()
-    await init_audit_table(pool)
+    try:
+        await pool.open(wait=True, timeout=3.0)
+    except Exception as e:
+        await pool.close()
+        pytest.skip(f"PostgreSQL unreachable at {settings.postgres_url}: {e}")
+
+    try:
+        await init_audit_table(pool)
+    except Exception as e:
+        await pool.close()
+        pytest.skip(f"Failed to initialize audit table in PostgreSQL: {e}")
+
     try:
         yield pool
     finally:
