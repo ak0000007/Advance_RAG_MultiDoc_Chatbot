@@ -22,6 +22,7 @@ Remediate Tier 1 (P0) security vulnerabilities and critical pipeline crashes fro
 - [x] **C4: Grading Prompt Crash Fixed**: Added `.partial(format_instructions=...)` in [`src/rag/grading.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/rag/grading.py).
 - [x] **H7: Bulk Guard Regex Fixed**: Word-boundary regex `\b(token)\b` applied in [`src/write_guards.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/write_guards.py).
 - [x] **Evaluation Benchmark Harness**: Built [`evals/mock_salesforce.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/evals/mock_salesforce.py), 16-case golden dataset in [`evals/golden_dataset.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/evals/golden_dataset.py), and runner [`evals/runner.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/evals/runner.py) achieving 100.0% accuracy across Opportunities, Bookings, Packages, Payments, and Safety Guards.
+- [x] **CI Pipeline Restored**: Fixed missing `pythonpath` in [`pyproject.toml`](file:///home/akhilsaini/Advance_RAG_Chatbot/pyproject.toml) and workflow runner invocation in [`.github/workflows/ci.yml`](file:///home/akhilsaini/Advance_RAG_Chatbot/.github/workflows/ci.yml); GitHub Actions run `37436740796` all green (11/11 tests pass).
 
 ---
 
