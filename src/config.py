@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     sf_private_key_path: str | None = None
     sf_domain: str = "https://your-domain.my.salesforce.com"
 
+    # API Authentication & Security
+    api_secret_key: str | None = None
+    sf_default_username: str | None = None
+
     # Write safety caps
     # Set WRITES_ENABLED=false in .env to strip ALL write tools at startup (read-only mode).
     writes_enabled: bool = True

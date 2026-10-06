@@ -5,11 +5,15 @@ SRP: only HTTP → graph → HTTP translation.
 OCP: add new routers in new files, include them in app.py.
 """
 
+import re
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Security, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.types import Command
 
+from src.config import settings
 from src.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -19,6 +23,30 @@ from src.api.schemas import (
 from src.api.dependencies import get_compiled_graph
 
 router = APIRouter()
+
+security_bearer = HTTPBearer(auto_error=False)
+security_api_key = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def _verify_auth_and_get_user(
+    auth_bearer: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
+    api_key: Optional[str] = Security(security_api_key),
+) -> Optional[str]:
+    """
+    Enforce API authentication and resolve authenticated user identity.
+    If settings.api_secret_key is set, rejects unauthenticated calls with 401.
+    If not set (dev mode), permits access.
+    """
+    required_key = settings.api_secret_key
+    if required_key:
+        token = auth_bearer.credentials if auth_bearer else api_key
+        if not token or token != required_key:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing authentication credentials.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return settings.sf_default_username
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -72,6 +100,7 @@ def health():
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
     graph=Depends(get_compiled_graph),
 ):
     """
@@ -100,9 +129,17 @@ async def chat(
 
     messages.append(HumanMessage(content=request.question))
 
+    # Resolve sf_username: authenticated server context takes precedence
+    raw_username = auth_user or request.sf_username
+    sf_username = None
+    if raw_username:
+        sf_username = re.sub(r"[\x00-\x1f\x7f]", "", raw_username).strip()[:100]
+
     thread_id = request.thread_id or str(uuid.uuid4())
-    config = _build_config(thread_id, request.sf_username)
+    config = _build_config(thread_id, sf_username)
     inputs = {"question": request.question, "messages": messages}
+    if sf_username:
+        inputs["sf_username"] = sf_username
 
     return await _run_and_respond(graph, inputs, config, thread_id)
 
@@ -110,6 +147,7 @@ async def chat(
 @router.post("/chat/resume", response_model=ChatResponse)
 async def resume_chat(
     request: ResumeRequest,
+    auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
     graph=Depends(get_compiled_graph),
 ):
     """
@@ -120,15 +158,23 @@ async def resume_chat(
 
     Returns the same ChatResponse envelope as /chat.
     """
-    config = _build_config(request.thread_id)
+    base_config = _build_config(request.thread_id)
 
     # Verify the thread actually exists and is interrupted
-    snapshot = await graph.aget_state(config)
+    snapshot = await graph.aget_state(base_config)
     if not snapshot or not snapshot.next:
         raise HTTPException(
             status_code=404,
             detail=f"Thread '{request.thread_id}' is not paused or does not exist.",
         )
+
+    # Preserve sf_username across resume: state checkpoint or server auth
+    thread_sf_username = (
+        snapshot.values.get("sf_username")
+        if snapshot.values
+        else None
+    ) or auth_user
+    config = _build_config(request.thread_id, thread_sf_username)
 
     return await _run_and_respond(
         graph,
