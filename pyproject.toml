@@ -54,3 +54,7 @@ include = ["src*", "evals*"]
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-v"
+markers = [
+    "routing: marks tests that execute the real-LLM routing evaluation suite (excluded by default, run with -m routing)",
+]
+

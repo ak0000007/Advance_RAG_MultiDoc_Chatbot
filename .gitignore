@@ -51,3 +51,9 @@ secrets/
 *.pem
 *.p12
 *.pfx
+
+# Local Agent & Scratch Workspaces
+scratch/
+.agents/
+.github/context-mode/
+
