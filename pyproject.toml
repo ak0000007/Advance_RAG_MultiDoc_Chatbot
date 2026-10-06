@@ -36,7 +36,8 @@ dependencies = [
     "langgraph-checkpoint-postgres",
     "psycopg-binary",
     "psycopg-pool",
-    "torch"
+    "torch",
+    "prometheus-client"
 ]
 
 [project.optional-dependencies]

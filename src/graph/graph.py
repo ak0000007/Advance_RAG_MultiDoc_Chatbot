@@ -169,6 +169,20 @@ def build_rag_graph(
     _base_tool_node = ToolNode(tools)
 
     async def tool_node(state: RAGState, config: RunnableConfig = None):
+        # Record Prometheus metric for invoked tools
+        messages = state.get("messages", [])
+        if messages:
+            last_message = messages[-1]
+            tool_calls = getattr(last_message, "tool_calls", None) or []
+            for tc in tool_calls:
+                tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                if tc_name:
+                    try:
+                        from src.telemetry_metrics import record_tool_call
+                        record_tool_call(str(tc_name))
+                    except Exception:
+                        pass
+
         write_count = state.get("write_count", 0)
         existing = config.get("configurable", {}) if config else {}
         sf_username = existing.get("sf_username") or state.get("sf_username")
