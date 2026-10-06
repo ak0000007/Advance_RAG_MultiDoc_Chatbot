@@ -1,0 +1,36 @@
+name: Routing Evaluation
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run weekly on Sunday at midnight UTC
+    - cron: '0 0 * * 0'
+
+jobs:
+  routing-eval:
+    name: Agent Routing Evaluation Harness
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+        pip install -r requirements.txt
+        pip install -e .[dev]
+
+    - name: Execute Routing Benchmark & Verify Threshold
+      env:
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+        QDRANT_URL: ${{ secrets.QDRANT_URL }}
+      run: |
+        python -m evals.routing.runner
+        python -m pytest tests/test_routing_eval.py -m routing -v
