@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     postgres_url: str | None = None
     qdrant_url: str | None = None
     qdrant_api_key: str | None = None
+    bm25_store_path: str = "./data/bm25_index.pkl"
 
     # Salesforce JWT
     sf_client_id: str | None = None

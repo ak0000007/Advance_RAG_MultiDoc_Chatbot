@@ -13,6 +13,7 @@ never change.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from src.llm.provider import create_llm
 from src.embeddings.embedding import BGEEmbeddings
@@ -112,7 +113,10 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=N
     # 4. BM25 sparse retriever
     # ------------------------------------------------
 
-    bm25_store = BM25Store()
+    if Path(settings.bm25_store_path).exists():
+        bm25_store = BM25Store.load(settings.bm25_store_path)
+    else:
+        bm25_store = BM25Store()
 
     # ------------------------------------------------
     # 5. Hybrid retriever (RRF fusion)

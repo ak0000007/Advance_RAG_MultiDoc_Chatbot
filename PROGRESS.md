@@ -25,13 +25,16 @@ Remediate Tier 1 (P0) security vulnerabilities and critical pipeline crashes fro
 - [x] **CI Pipeline Restored**: Fixed missing `pythonpath` in [`pyproject.toml`](file:///home/akhilsaini/Advance_RAG_Chatbot/pyproject.toml) and workflow runner invocation in [`.github/workflows/ci.yml`](file:///home/akhilsaini/Advance_RAG_Chatbot/.github/workflows/ci.yml); GitHub Actions run `37436740796` all green (11/11 tests pass).
 - [x] **Agent Routing Evaluation Harness**: Implemented [`evals/routing/`](file:///home/akhilsaini/Advance_RAG_Chatbot/evals/routing/) (dataset, judge, runner) with 24 natural-language cases against live LLM; achieved **75.0% empirical accuracy**, with `@pytest.mark.routing` verified passing in [`tests/test_routing_eval.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_routing_eval.py).
 - [x] **Enterprise Write Audit Logging & Telemetry (H10 Fixed)**: Built [`src/audit/log.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/audit/log.py) with `write_audit_log` PostgreSQL table, wired proposal/decision/outcome audits into [`src/graph/approval.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/approval.py), shared connection pool in [`src/graph/memory.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/memory.py) & [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py), exposed authenticated `GET /audit/{thread_id}` and unauthenticated `GET /metrics` in [`src/api/routes.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/routes.py), verified 7/7 tests in [`tests/test_audit_log.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_audit_log.py).
+- [x] **H2 + H3: Ingestion Sync & Deduplication**: Added deterministic RFC 4122 UUIDv5 ID generation and upsert in [`ingest.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/ingest.py); added pickle persistence (`save`/`load`) and deduplication to [`src/retrieval/bm25_store.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/retrieval/bm25_store.py); wired disk loading in [`src/api/dependencies.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/dependencies.py); verified 4/4 tests in [`tests/test_ingest_sync.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_ingest_sync.py) and full suite 22/22 passing.
 
 ---
 
-## In Progress / Pending (P0 Backlog)
-- [ ] **H2 + H3: Ingestion Sync**: Dual-index Qdrant + [`BM25Store`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/retrieval/bm25_store.py) with deterministic content-hash IDs in [`ingest.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/ingest.py).
+## In Progress / Pending (P1 Scale & Enterprise Backlog)
+- [ ] **P1: Token Streaming**: Expose SSE endpoint via `graph.astream_events()`.
+- [ ] **P1: CORS Middleware**: Add `CORSMiddleware` in [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py) (Debt H9).
+- [ ] **P1: Parallel Hybrid Retrieval**: Parallelize dense + sparse retrieval with `asyncio.gather` in [`src/retrieval/hybrid_retriever.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/retrieval/hybrid_retriever.py) (Debt H4).
 
 ---
 
 ## Next Immediate Action
-1. Populate BM25 store during `ingest.py` with deterministic content-hash IDs (H2/H3).
+1. Implement P1 item: Add CORS middleware in [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py) or begin SSE token streaming.

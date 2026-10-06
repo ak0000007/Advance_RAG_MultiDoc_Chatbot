@@ -6,14 +6,16 @@ Independent of any vector store — satisfies SRP and DIP.
 """
 
 import math
+import pickle
 from collections import Counter
+from pathlib import Path
 
 from langchain_core.documents import Document
 
 
 class BM25Store:
     """
-    In-memory BM25 index over LangChain Documents.
+    In-memory and pickle-persisted BM25 index over LangChain Documents.
 
     Operates independently of the vector store.
     Consumers interact via `as_retriever()` which returns
@@ -33,13 +35,71 @@ class BM25Store:
         self._idf: dict[str, float] = {}
 
     # ------------------------------------------------------------------
-    # Indexing
+    # Indexing & Deduplication
     # ------------------------------------------------------------------
 
     def add_documents(self, documents: list[Document]) -> None:
-        """Index documents. Can be called multiple times (appends)."""
-        self._documents.extend(documents)
+        """Index documents with deduplication. Appends only unseen documents."""
+        if not documents:
+            return
+
+        def _doc_key(doc: Document) -> str:
+            return (
+                getattr(doc, "id", None)
+                or doc.metadata.get("chunk_id")
+                or doc.metadata.get("document_id")
+                or str(hash(doc.page_content))
+            )
+
+        existing_keys = {_doc_key(d) for d in self._documents}
+        new_docs = []
+        for doc in documents:
+            key = _doc_key(doc)
+            if key not in existing_keys:
+                existing_keys.add(key)
+                new_docs.append(doc)
+
+        if not new_docs and self._documents:
+            return
+
+        self._documents.extend(new_docs)
         self._build_index()
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def save(self, filepath: str | Path) -> None:
+        """Serialize BM25 index state to disk using pickle."""
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "k1": self.k1,
+            "b": self.b,
+            "documents": self._documents,
+            "doc_freqs": self._doc_freqs,
+            "avg_dl": self._avg_dl,
+            "idf": self._idf,
+        }
+        with open(path, "wb") as f:
+            pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    @classmethod
+    def load(cls, filepath: str | Path) -> "BM25Store":
+        """Deserialize BM25 index state from disk."""
+        path = Path(filepath)
+        if not path.exists():
+            raise FileNotFoundError(f"BM25 index file not found at {path}")
+
+        with open(path, "rb") as f:
+            payload = pickle.load(f)
+
+        store = cls(k1=payload.get("k1", 1.5), b=payload.get("b", 0.75))
+        store._documents = payload.get("documents", [])
+        store._doc_freqs = payload.get("doc_freqs", [])
+        store._avg_dl = payload.get("avg_dl", 0.0)
+        store._idf = payload.get("idf", {})
+        return store
 
     def _tokenize(self, text: str) -> list[str]:
         """Lowercase whitespace tokenizer. Good enough for BM25."""
