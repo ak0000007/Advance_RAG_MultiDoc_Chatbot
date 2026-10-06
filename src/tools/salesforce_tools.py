@@ -19,12 +19,15 @@ def build_salesforce_opportunities_tool(salesforce_client):
     @tool
     async def search_salesforce_opportunities(search: str, config: RunnableConfig) -> str:
         """
-        Search for Salesforce Opportunities (deals).
-        Use this tool when the user asks about their Salesforce deals, opportunities, or amounts.
+        Search Salesforce Opportunities (deals/pipeline).
+
+        Call with search="" to list the most recent deals.
+        Call with a company or deal name to filter results.
+        If multiple results are returned and the user wants to update one,
+        present the list and ask which specific record to proceed with.
 
         Args:
-            search: A specific company name or deal name to search for (e.g. 'Acme').
-                    Leave blank to fetch the most recent deals.
+            search: Company or deal name to filter by (e.g. 'Acme'). Leave blank for recent deals.
         """
         sf_username = config.get("configurable", {}).get("sf_username")
 
@@ -97,7 +100,11 @@ def build_salesforce_update_tool(salesforce_client, max_writes_per_session: int 
         Request a Salesforce Opportunity stage update for exactly ONE opportunity.
         The system will pause and ask the user to approve before any data is written.
 
-        IMPORTANT: This tool ONLY accepts a single Salesforce Opportunity ID.
+        PRE-CONDITION: Always call search_salesforce_opportunities first to get the
+        18-char Salesforce ID. Never guess or fabricate an ID.
+        If multiple opportunities matched, confirm which one with the user before calling this.
+
+        This tool ONLY accepts a single Salesforce Opportunity ID.
         Bulk operations (e.g. "close all deals") are explicitly refused.
 
         Args:

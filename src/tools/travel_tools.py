@@ -82,14 +82,17 @@ def build_get_booking_tool(salesforce_client):
     @tool
     async def get_booking(config: RunnableConfig, booking_id_or_name: str = "") -> str:
         """
-        Retrieve Salesforce Booking records.
-        - Leave booking_id_or_name blank to retrieve all bookings for the user.
-        - Provide a booking number (e.g. 'BK-000001') or 18-char Salesforce ID to get details for a specific booking.
+        Retrieve Salesforce Booking records for the current user.
 
-        Use when the user asks to see their bookings, check booking status, or before modifying a booking.
+        - Call with NO arguments to fetch ALL user bookings automatically.
+        - Call with booking_id_or_name (e.g. 'BK-000001') to get a specific booking.
+
+        IMPORTANT: Never ask the user for a booking ID or number first.
+        Always call this tool immediately; let the user choose from the results.
+        Call this before any update_booking call to get the correct Salesforce ID.
 
         Args:
-            booking_id_or_name: (optional) Booking number (e.g. 'BK-000001') or Salesforce ID.
+            booking_id_or_name: (optional) Booking number (e.g. 'BK-000001') or 18-char Salesforce ID.
                                 Leave blank to fetch all bookings.
         """
         sf_username = config.get("configurable", {}).get("sf_username")
@@ -173,15 +176,18 @@ def build_get_payments_tool(salesforce_client):
         payment_id: str = "",
     ) -> str:
         """
-        Retrieve Salesforce Payment records.
-        - Leave both blank to retrieve all payments accessible to the user.
-        - Or provide booking_id_or_name (e.g. 'BK-000001' or SF ID) to get payments for that booking.
-        - Or provide payment_id to get a specific payment.
+        Retrieve Salesforce Payment records for the current user.
 
-        Use when the user asks about payments, transaction history, amounts paid, or refund records.
+        - Call with NO arguments to fetch ALL payments automatically.
+        - Provide booking_id_or_name (e.g. 'BK-000001') to filter by booking.
+        - Provide payment_id to fetch a specific payment.
+
+        IMPORTANT: Never ask the user for a payment ID or booking ID first.
+        Always call this tool immediately; let the user choose from the results.
+        Call this before any update_payment call to get the correct Salesforce ID.
 
         Args:
-            booking_id_or_name: (optional) Booking number or ID to filter by booking.
+            booking_id_or_name: (optional) Booking number or ID to filter payments.
             payment_id: (optional) 18-char Salesforce Payment__c ID.
         """
         sf_username = config.get("configurable", {}).get("sf_username")
@@ -240,8 +246,10 @@ def build_update_booking_tool(salesforce_client, max_writes_per_session: int = 5
         """
         Request a Salesforce Booking record update. The system will pause for human approval.
 
-        IMPORTANT: Only accepts a single Booking ID. Get the ID from get_booking first.
-        All fields except booking_id are optional — only supplied fields are changed.
+        PRE-CONDITION: Always call get_booking first to get the 18-char Salesforce ID.
+        Never guess or fabricate a booking_id. If multiple bookings exist, confirm
+        which specific one the user wants to update before calling this tool.
+        Only accepts a single Booking ID. All fields except booking_id are optional.
 
         Args:
             booking_id: 18-char Salesforce Booking__c ID (starts with a00).
@@ -325,7 +333,10 @@ def build_update_travel_package_tool(salesforce_client, max_writes_per_session: 
         """
         Request a Salesforce Travel Package update. The system will pause for human approval.
 
-        IMPORTANT: Only accepts a single Travel_Package__c ID. Get the ID from get_travel_packages first.
+        PRE-CONDITION: Always call get_travel_packages first to get the 18-char Salesforce ID.
+        Never guess or fabricate a package_id. If multiple packages exist, confirm
+        which specific one the user wants to update before calling this tool.
+        Only accepts a single Travel_Package__c ID.
 
         Args:
             package_id: 18-char Salesforce Travel_Package__c ID.
@@ -407,7 +418,10 @@ def build_update_payment_tool(salesforce_client, max_writes_per_session: int = 5
         """
         Request a Salesforce Payment record update. The system will pause for human approval.
 
-        IMPORTANT: Only accepts a single Payment__c ID. Get the ID from get_payments first.
+        PRE-CONDITION: Always call get_payments first to get the 18-char Salesforce ID.
+        Never guess or fabricate a payment_id. If multiple payments exist, confirm
+        which specific one the user wants to update before calling this tool.
+        Only accepts a single Payment__c ID.
 
         Args:
             payment_id: 18-char Salesforce Payment__c ID.
