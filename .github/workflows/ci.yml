@@ -28,7 +28,7 @@ jobs:
       run: |
         # Check if tests directory has python files and run pytest
         if ls tests/test_*.py 1> /dev/null 2>&1; then
-          pytest tests/
+          python -m pytest tests/
         else
           echo "No tests found in 'tests' directory."
         fi
