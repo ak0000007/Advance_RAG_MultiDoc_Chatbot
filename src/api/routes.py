@@ -8,7 +8,7 @@ OCP: add new routers in new files, include them in app.py.
 import re
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.types import Command
@@ -20,7 +20,7 @@ from src.api.schemas import (
     ResumeRequest,
     HealthResponse,
 )
-from src.api.dependencies import get_compiled_graph
+from src.api.dependencies import get_compiled_graph, get_db_pool
 
 router = APIRouter()
 
@@ -182,3 +182,32 @@ async def resume_chat(
         config,
         request.thread_id,
     )
+
+
+@router.get("/audit/{thread_id}")
+async def get_thread_audit_log(
+    thread_id: str,
+    auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
+    pool=Depends(get_db_pool),
+):
+    """
+    Fetch write audit log entries for a thread scoped strictly to caller's sf_username.
+    """
+    if not pool:
+        return []
+    from src.audit.log import get_audit_records_by_thread
+
+    sf_username = auth_user or settings.sf_default_username or ""
+    records = await get_audit_records_by_thread(pool, thread_id, sf_username)
+    return records
+
+
+@router.get("/metrics")
+def get_metrics():
+    """
+    Prometheus scraper endpoint (unauthenticated for standard Prometheus scrape discovery).
+    """
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
