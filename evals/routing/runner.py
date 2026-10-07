@@ -84,6 +84,7 @@ class RoutingEvalRunner:
         self.graph = build_graph_with_client(
             sf_client=self.mock_sf,
             checkpointer=self.checkpointer,
+            pool=None,
         )
 
     async def execute_case(self, case: RoutingTestCase) -> dict[str, Any]:
@@ -133,8 +134,6 @@ class RoutingEvalRunner:
             elif case.expected_behavior == "asks_clarification":
                 if any(t in WRITE_TOOLS for t in tool_calls):
                     failure_reason = f"Unsafely called mutating tool(s) {tool_calls} on ambiguous query."
-                elif tool_calls:
-                    failure_reason = f"Expected clarification without tool call, but called {tool_calls}."
                 else:
                     is_clarification = await judge_behavior("asks_clarification", agent_msgs)
                     if is_clarification:

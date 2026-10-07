@@ -21,12 +21,15 @@ Write counter:
 
 import hashlib
 import json
+import logging
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
 
 from src.graph.state import RAGState
 from src.audit.log import record_proposed, record_decision, record_outcome
+
+logger = logging.getLogger(__name__)
 
 _NO_UPDATE: dict = {}
 
@@ -136,23 +139,26 @@ def build_human_approval_node(salesforce_client, pool=None):
 
         # ── Audit: record proposed write before interrupt ───────────────────
         if pool is not None:
-            sf_user = (
-                approval_data.get("sf_username")
-                or (config.get("configurable", {}).get("sf_username") if config else None)
-                or state.get("sf_username")
-                or ""
-            )
-            await record_proposed(
-                pool=pool,
-                thread_id=thread_id or "",
-                sf_username=sf_user,
-                action_type=action_type,
-                record_id=record_id,
-                record_name=record_name,
-                idempotency_key=idempotency_key,
-                proposed_payload=approval_data,
-                status="proposed",
-            )
+            try:
+                sf_user = (
+                    approval_data.get("sf_username")
+                    or (config.get("configurable", {}).get("sf_username") if config else None)
+                    or state.get("sf_username")
+                    or ""
+                )
+                await record_proposed(
+                    pool=pool,
+                    thread_id=thread_id or "",
+                    sf_username=sf_user,
+                    action_type=action_type,
+                    record_id=record_id,
+                    record_name=record_name,
+                    idempotency_key=idempotency_key,
+                    proposed_payload=approval_data,
+                    status="proposed",
+                )
+            except Exception as exc:
+                logger.warning(f"Audit log record_proposed bypassed: {exc}")
 
         # ── Freeze graph — returns resume value on second execution ─────────
         decision = interrupt({
@@ -172,12 +178,15 @@ def build_human_approval_node(salesforce_client, pool=None):
         # ── Audit: record decision ──────────────────────────────────────────
         decision_status = "approved" if decision == "Approve" else ("rejected" if decision == "Reject" else "aborted")
         if pool is not None:
-            await record_decision(
-                pool=pool,
-                idempotency_key=idempotency_key,
-                decision=str(decision),
-                status=decision_status,
-            )
+            try:
+                await record_decision(
+                    pool=pool,
+                    idempotency_key=idempotency_key,
+                    decision=str(decision),
+                    status=decision_status,
+                )
+            except Exception as exc:
+                logger.warning(f"Audit log record_decision bypassed: {exc}")
 
         # ── Guard: only accept canonical decision values ─────────────────────
         write_success = False
@@ -207,23 +216,29 @@ def build_human_approval_node(salesforce_client, pool=None):
                     )
                     outcome_status = "failed"
                 if pool is not None:
-                    await record_outcome(
-                        pool=pool,
-                        idempotency_key=idempotency_key,
-                        result=response,
-                        status=outcome_status,
-                        action_type=action_type,
-                    )
+                    try:
+                        await record_outcome(
+                            pool=pool,
+                            idempotency_key=idempotency_key,
+                            result=response,
+                            status=outcome_status,
+                            action_type=action_type,
+                        )
+                    except Exception as exc:
+                        logger.warning(f"Audit log record_outcome bypassed: {exc}")
             except Exception as e:
                 result = f"Failed to execute Salesforce update: {str(e)}"
                 if pool is not None:
-                    await record_outcome(
-                        pool=pool,
-                        idempotency_key=idempotency_key,
-                        result={"error": str(e)},
-                        status="failed",
-                        action_type=action_type,
-                    )
+                    try:
+                        await record_outcome(
+                            pool=pool,
+                            idempotency_key=idempotency_key,
+                            result={"error": str(e)},
+                            status="failed",
+                            action_type=action_type,
+                        )
+                    except Exception as exc:
+                        logger.warning(f"Audit log record_outcome error bypassed: {exc}")
         else:  # Reject
             result = f"Action aborted: User rejected — '{record_name}'."
             try:

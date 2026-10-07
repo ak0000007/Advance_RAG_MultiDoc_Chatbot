@@ -52,9 +52,10 @@ def get_salesforce_client() -> SalesforceAsyncClient | None:
     )
 
 _DEFAULT_CLIENT = object()
+_DEFAULT_POOL = object()
 
 
-def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=None):
+def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=_DEFAULT_POOL):
     """
     Build and return compiled LangGraph with injected or default Salesforce client.
     Reuses all construction logic so production and evals share a single code path.
@@ -180,11 +181,14 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=N
     tools = [qdrant_tool]
     human_approval_node = None
 
-    if pool is None and settings.postgres_url:
-        try:
-            from src.graph.memory import get_postgres_pool
-            pool = get_postgres_pool(settings.postgres_url)
-        except Exception:
+    if pool is _DEFAULT_POOL:
+        if settings.postgres_url:
+            try:
+                from src.graph.memory import get_postgres_pool
+                pool = get_postgres_pool(settings.postgres_url)
+            except Exception:
+                pool = None
+        else:
             pool = None
 
     if sf_client:
