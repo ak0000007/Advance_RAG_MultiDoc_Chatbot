@@ -53,6 +53,9 @@ class RAGState(TypedDict, total=False):
     # Authenticated user context: persisted across interrupts and thread turns.
     sf_username: str
 
+    # Multi-agent architecture: tracks which specialist subgraph handled the turn
+    classified_domain: str
+
     # -----------------------------------------------------
     # Answer evaluation
     # -----------------------------------------------------

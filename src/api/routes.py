@@ -20,7 +20,7 @@ from src.api.schemas import (
     ResumeRequest,
     HealthResponse,
 )
-from src.api.dependencies import get_compiled_graph, get_db_pool
+from src.api.dependencies import get_compiled_graph, get_active_graph, get_db_pool
 
 router = APIRouter()
 
@@ -101,7 +101,7 @@ def health():
 async def chat(
     request: ChatRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
-    graph=Depends(get_compiled_graph),
+    graph=Depends(get_active_graph),
 ):
     """
     Invoke the RAG graph with user question + history.
@@ -148,7 +148,7 @@ async def chat(
 async def resume_chat(
     request: ResumeRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
-    graph=Depends(get_compiled_graph),
+    graph=Depends(get_active_graph),
 ):
     """
     Resume a graph that was interrupted for human approval.

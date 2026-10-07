@@ -111,6 +111,17 @@ class RoutingEvalRunner:
             input_state = {"messages": [HumanMessage(content=case.user_message)]}
             result_state = await self.graph.ainvoke(input_state, config=config)
             messages = result_state.get("messages", [])
+            specialist = result_state.get("classified_domain")
+
+            # When a subgraph interrupts for human approval, its pending messages
+            # reside in the active task snapshot rather than the parent result_state.
+            if len(messages) <= 1:
+                snapshot = await self.graph.aget_state(config, subgraphs=True)
+                for task in (snapshot.tasks or []):
+                    if hasattr(task, "state") and hasattr(task.state, "values"):
+                        sub_msgs = task.state.values.get("messages", [])
+                        if len(sub_msgs) > len(messages):
+                            messages = sub_msgs
 
             # 2. Extract telemetry
             tool_calls, agent_msgs, final_answer = _extract_routing_telemetry(messages)
@@ -182,6 +193,7 @@ class RoutingEvalRunner:
             "expected_tool": case.expected_tool,
             "expected_behavior": case.expected_behavior,
             "tool_calls": tool_calls,
+            "specialist": specialist,
             "passed": passed,
             "latency_ms": round(elapsed_ms, 2),
             "failure_reason": failure_reason,
@@ -218,6 +230,13 @@ class RoutingEvalRunner:
             for cat, data in categories.items()
         }
 
+        # Specialist breakdown (if multi-agent was active)
+        specialist_counts: dict[str, int] = {}
+        for r in results:
+            sp = r.get("specialist")
+            if sp:
+                specialist_counts[sp] = specialist_counts.get(sp, 0) + 1
+
         report = {
             "summary": {
                 "total_cases": total,
@@ -226,6 +245,7 @@ class RoutingEvalRunner:
                 "overall_accuracy_pct": round(accuracy_pct, 2),
                 "avg_latency_ms": round(avg_latency, 2),
                 "category_scores": category_scores,
+                "specialist_counts": specialist_counts,
             },
             "cases": results,
         }
@@ -246,6 +266,11 @@ def print_scorecard(report: dict[str, Any]) -> None:
     color = "\033[1;32m" if acc >= 70.0 else "\033[1;31m"
     print(f" OVERALL ACCURACY   : {color}{acc}%\033[0m")
     print(f" AVERAGE LATENCY    : {summary['avg_latency_ms']} ms")
+    if summary.get("specialist_counts"):
+        print("-" * 80)
+        print(" SPECIALIST ROUTING BREAKDOWN:")
+        for sp, count in summary["specialist_counts"].items():
+            print(f"  • {sp:<20}: {count} cases")
     print("-" * 80)
     print(" BEHAVIOR CATEGORY ACCURACY BREAKDOWN:")
     for cat, score in summary["category_scores"].items():
@@ -256,8 +281,9 @@ def print_scorecard(report: dict[str, Any]) -> None:
     for r in report["cases"]:
         status_sym = "\033[32m✔ PASS\033[0m" if r["passed"] else "\033[31m✖ FAIL\033[0m"
         called = ",".join(r["tool_calls"]) if r["tool_calls"] else "no_tools"
+        sp_info = f" | {r['specialist']:<6}" if r.get("specialist") else ""
         print(
-            f"  [{r['case_id']}] {status_sym} | {r['expected_behavior']:<18} | "
+            f"  [{r['case_id']}] {status_sym}{sp_info} | {r['expected_behavior']:<18} | "
             f"called={called:<25} | {r['latency_ms']:>7.2f}ms | {r['user_message'][:35]}"
         )
         if not r["passed"]:

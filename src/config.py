@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Max Salesforce write operations allowed per conversation session.
     max_writes_per_session: int = 5
 
+    # Multi-agent architecture toggle: routes through orchestrator + 3 specialist subgraphs
+    use_multi_agent_architecture: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

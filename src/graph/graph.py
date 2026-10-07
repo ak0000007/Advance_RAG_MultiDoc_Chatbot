@@ -89,6 +89,7 @@ def build_rag_graph(
     tools: list,
     checkpointer=None,
     human_approval_node=None,
+    system_prompt: str = SYSTEM_PROMPT,
     **kwargs,
 ):
     """
@@ -100,6 +101,7 @@ def build_rag_graph(
         checkpointer: LangGraph checkpointer (required for interrupt to work).
         human_approval_node: Optional pre-built approval node (from approval.py).
                              If None, approval routing is skipped entirely.
+        system_prompt: Optional domain-specific system prompt (defaults to SYSTEM_PROMPT).
     """
     graph_builder = StateGraph(RAGState)
 
@@ -127,7 +129,7 @@ def build_rag_graph(
             )
             return {"messages": [fallback_msg], "answer": fallback_msg.content}
 
-        invoke_messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+        invoke_messages = [SystemMessage(content=system_prompt)] + messages
         response = await llm_with_tools.ainvoke(invoke_messages)
 
         update = {"messages": [response]}

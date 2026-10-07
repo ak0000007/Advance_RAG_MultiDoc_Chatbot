@@ -55,28 +55,22 @@ _DEFAULT_CLIENT = object()
 _DEFAULT_POOL = object()
 
 
-def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=_DEFAULT_POOL):
-    """
-    Build and return compiled LangGraph with injected or default Salesforce client.
-    Reuses all construction logic so production and evals share a single code path.
-    """
-    # ------------------------------------------------
-    # 1. LLM (Gemini + DeepSeek fallback)
-    # ------------------------------------------------
+def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, checkpointer=None):
+    """Internal helper to construct shared LLM, RAG tools, and checkpointer."""
+    from src.rag.grading import RetrievalGrade, build_retrieval_grader
+    from src.rag.rewriter import build_corrective_rewriter
 
-    from src.rag.grading import RetrievalGrade
-    
+    if hasattr(pool, "get_tuple") or hasattr(pool, "put"):
+        checkpointer = pool
+        pool = _DEFAULT_POOL
+
     fallback = "openai" if settings.openai_api_key else None
-    
-    # Standard LLM (for generation and query rewriting)
     llm = create_llm(
         provider="google",
         fallback_provider=fallback,
         temperature=0.0,
         max_tokens=2048,
     )
-    
-    # Pre-configured structured LLMs for nodes
     retrieval_grader_llm = create_llm(
         provider="google",
         fallback_provider=fallback,
@@ -85,16 +79,8 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=_
         structured_output=RetrievalGrade,
     )
 
-    # ------------------------------------------------
-    # 2. Embeddings
-    # ------------------------------------------------
-
     bge = BGEEmbeddings()
     embeddings = bge.get_embeddings()
-
-    # ------------------------------------------------
-    # 3. Vector store (Qdrant — local persistent)
-    # ------------------------------------------------
 
     if settings.qdrant_url:
         qdrant_store = QdrantStore(
@@ -110,18 +96,10 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=_
             path="./qdrant_data",
         )
 
-    # ------------------------------------------------
-    # 4. BM25 sparse retriever
-    # ------------------------------------------------
-
     if Path(settings.bm25_store_path).exists():
         bm25_store = BM25Store.load(settings.bm25_store_path)
     else:
         bm25_store = BM25Store()
-
-    # ------------------------------------------------
-    # 5. Hybrid retriever (RRF fusion)
-    # ------------------------------------------------
 
     hybrid = HybridRetriever(
         retrievers=[
@@ -130,10 +108,6 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=_
         ],
         final_k=20,
     )
-
-    # ------------------------------------------------
-    # 6. Cross-encoder reranker
-    # ------------------------------------------------
 
     reranker = CrossEncoderReranker(
         model_name=settings.reranker_model_name,
@@ -144,42 +118,18 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=_
         top_k=5,
     )
 
-    # ------------------------------------------------
-    # 7. Generation chain (docs already retrieved)
-    # ------------------------------------------------
-
-    generation_chain = build_generation_chain(llm)
-
-    if checkpointer is None:
-        try:
-            from src.graph.memory import get_checkpointer
-            checkpointer = get_checkpointer(settings.postgres_url)
-        except Exception:
-            from langgraph.checkpoint.memory import MemorySaver
-            checkpointer = MemorySaver()
-
-    # ------------------------------------------------
-    # 8. Build Tools and Compile Graph
-    # ------------------------------------------------
-    
-    from src.rag.grading import build_retrieval_grader
-    from src.rag.rewriter import build_corrective_rewriter
-    
     grader_chain = build_retrieval_grader(retrieval_grader_llm)
     rewriter_chain = build_corrective_rewriter(llm)
-    
+
     qdrant_tool = build_document_search_tool(
-        retriever, 
-        grader_chain, 
-        rewriter_chain, 
-        settings.max_retrieval_attempts
+        retriever,
+        grader_chain,
+        rewriter_chain,
+        settings.max_retrieval_attempts,
     )
 
     if sf_client is _DEFAULT_CLIENT:
         sf_client = get_salesforce_client()
-
-    tools = [qdrant_tool]
-    human_approval_node = None
 
     if pool is _DEFAULT_POOL:
         if settings.postgres_url:
@@ -191,15 +141,49 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=_
         else:
             pool = None
 
+    if checkpointer is None:
+        try:
+            from src.graph.memory import get_checkpointer
+            checkpointer = get_checkpointer(settings.postgres_url)
+        except Exception:
+            from langgraph.checkpoint.memory import MemorySaver
+            checkpointer = MemorySaver()
+
+    return llm, qdrant_tool, sf_client, pool, checkpointer
+
+
+def build_graph_with_client(
+    sf_client=_DEFAULT_CLIENT,
+    checkpointer=None,
+    pool=_DEFAULT_POOL,
+    force_single_agent: bool = False,
+):
+    """
+    Build and return compiled LangGraph with injected or default Salesforce client.
+    Reuses all construction logic so production and evals share a single code path.
+    """
+    if not force_single_agent and settings.use_multi_agent_architecture:
+        return build_multi_agent_graph(
+            sf_client=sf_client,
+            pool=pool,
+            checkpointer=checkpointer,
+        )
+
+    llm, qdrant_tool, sf_client, pool, checkpointer = _prepare_core_dependencies(
+        sf_client=sf_client,
+        pool=pool,
+        checkpointer=checkpointer,
+    )
+
+    tools = [qdrant_tool]
+    human_approval_node = None
+
     if sf_client:
-        # ── Read-only tools: always available when SF is configured ───────────
         tools.append(build_salesforce_opportunities_tool(sf_client))
         tools.append(build_get_booking_tool(sf_client))
         tools.append(build_get_travel_packages_tool(sf_client))
         tools.append(build_get_payments_tool(sf_client))
 
-        # ── Write tools: only when WRITES_ENABLED=true (default) ─────────────
-        # Set WRITES_ENABLED=false in .env to drop all write capability instantly.
         if settings.writes_enabled:
             tools.append(
                 build_salesforce_update_tool(
@@ -222,18 +206,122 @@ def build_graph_with_client(sf_client=_DEFAULT_CLIENT, checkpointer=None, pool=_
     return graph
 
 
+def build_multi_agent_graph(
+    sf_client=_DEFAULT_CLIENT,
+    pool=_DEFAULT_POOL,
+    checkpointer=None,
+    **kwargs,
+):
+    """
+    Build and return compiled multi-agent orchestrator workflow with three domain specialists:
+      - crm_agent: search_salesforce_opportunities, update_salesforce_opportunity_status
+      - travel_agent: get_booking, update_booking, get_travel_packages, update_travel_package, get_payments, update_payment
+      - docs_agent: search_documents (no write tools, no approval node)
+    """
+    from src.graph.prompts import CRM_SYSTEM_PROMPT, TRAVEL_SYSTEM_PROMPT, DOCS_SYSTEM_PROMPT
+    from src.graph.orchestrator import build_orchestrator_graph
+
+    # Handle if checkpointer was passed as 2nd positional argument
+    if hasattr(pool, "get_tuple") or hasattr(pool, "put"):
+        checkpointer = pool
+        pool = _DEFAULT_POOL
+
+    llm, qdrant_tool, sf_client, pool, checkpointer = _prepare_core_dependencies(
+        sf_client=sf_client,
+        pool=pool,
+        checkpointer=checkpointer,
+    )
+
+    # 1. CRM Specialist Tools
+    crm_tools = []
+    crm_approval_node = None
+    if sf_client:
+        crm_tools.append(build_salesforce_opportunities_tool(sf_client))
+        if settings.writes_enabled:
+            crm_tools.append(
+                build_salesforce_update_tool(
+                    sf_client,
+                    max_writes_per_session=settings.max_writes_per_session,
+                )
+            )
+            crm_approval_node = build_human_approval_node(sf_client, pool=pool)
+
+    # 2. Travel Specialist Tools
+    travel_tools = []
+    travel_approval_node = None
+    if sf_client:
+        travel_tools.append(build_get_booking_tool(sf_client))
+        travel_tools.append(build_get_travel_packages_tool(sf_client))
+        travel_tools.append(build_get_payments_tool(sf_client))
+        if settings.writes_enabled:
+            travel_tools.append(build_update_booking_tool(sf_client, settings.max_writes_per_session))
+            travel_tools.append(build_update_travel_package_tool(sf_client, settings.max_writes_per_session))
+            travel_tools.append(build_update_payment_tool(sf_client, settings.max_writes_per_session))
+            travel_approval_node = build_human_approval_node(sf_client, pool=pool)
+
+    # 3. Docs Specialist Tools
+    docs_tools = [qdrant_tool]
+
+    # Build the 3 specialist subgraphs using build_rag_graph
+    crm_graph = build_rag_graph(
+        llm=llm,
+        tools=crm_tools,
+        checkpointer=checkpointer,
+        human_approval_node=crm_approval_node,
+        system_prompt=CRM_SYSTEM_PROMPT,
+    )
+
+    travel_graph = build_rag_graph(
+        llm=llm,
+        tools=travel_tools,
+        checkpointer=checkpointer,
+        human_approval_node=travel_approval_node,
+        system_prompt=TRAVEL_SYSTEM_PROMPT,
+    )
+
+    docs_graph = build_rag_graph(
+        llm=llm,
+        tools=docs_tools,
+        checkpointer=checkpointer,
+        human_approval_node=None,
+        system_prompt=DOCS_SYSTEM_PROMPT,
+    )
+
+    return build_orchestrator_graph(
+        crm_graph=crm_graph,
+        travel_graph=travel_graph,
+        docs_graph=docs_graph,
+        llm=llm,
+        checkpointer=checkpointer,
+    )
+
+
 @lru_cache
 def get_compiled_graph():
     """
-    Build and return the compiled LangGraph once.
-
-    Everything is wired here:
-        LLM → Embeddings → Stores → Retrievers →
-        Reranker → Generation chain → Graph
-
+    Build and return the single-agent compiled LangGraph once.
     Cached — subsequent calls return the same instance.
     """
-    return build_graph_with_client()
+    return build_graph_with_client(force_single_agent=True)
+
+
+@lru_cache
+def get_compiled_multi_agent_graph():
+    """
+    Build and return the multi-agent orchestrator LangGraph once.
+    Cached — subsequent calls return the same instance.
+    """
+    return build_multi_agent_graph()
+
+
+def get_active_graph():
+    """
+    Return active graph according to settings.use_multi_agent_architecture.
+    Provides dependency injection for FastAPI routes.
+    """
+    if settings.use_multi_agent_architecture:
+        return get_compiled_multi_agent_graph()
+    return get_compiled_graph()
 
 
 def get_db_pool():
