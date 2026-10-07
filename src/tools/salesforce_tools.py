@@ -100,8 +100,9 @@ def build_salesforce_update_tool(salesforce_client, max_writes_per_session: int 
         Request a Salesforce Opportunity stage update for exactly ONE opportunity.
         The system will pause and ask the user to approve before any data is written.
 
-        PRE-CONDITION: Always call search_salesforce_opportunities first to get the
-        18-char Salesforce ID. Never guess or fabricate an ID.
+        PRE-CONDITION: Call search_salesforce_opportunities first to resolve the ID —
+        unless the user's message already contains a valid-looking Salesforce ID (15 or 18 alphanumeric characters),
+        in which case use it directly without this lookup. Never guess or fabricate an ID.
         If multiple opportunities matched, confirm which one with the user before calling this.
 
         This tool ONLY accepts a single Salesforce Opportunity ID.

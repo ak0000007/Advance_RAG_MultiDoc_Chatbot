@@ -246,9 +246,10 @@ def build_update_booking_tool(salesforce_client, max_writes_per_session: int = 5
         """
         Request a Salesforce Booking record update. The system will pause for human approval.
 
-        PRE-CONDITION: Always call get_booking first to get the 18-char Salesforce ID.
-        Never guess or fabricate a booking_id. If multiple bookings exist, confirm
-        which specific one the user wants to update before calling this tool.
+        PRE-CONDITION: Call get_booking first to resolve the ID — unless the user's message
+        already contains a valid-looking Salesforce ID (15 or 18 alphanumeric characters),
+        in which case use it directly without this lookup. Never guess or fabricate a booking_id.
+        If multiple bookings exist, confirm which specific one the user wants to update before calling this tool.
         Only accepts a single Booking ID. All fields except booking_id are optional.
 
         Args:
@@ -333,9 +334,10 @@ def build_update_travel_package_tool(salesforce_client, max_writes_per_session: 
         """
         Request a Salesforce Travel Package update. The system will pause for human approval.
 
-        PRE-CONDITION: Always call get_travel_packages first to get the 18-char Salesforce ID.
-        Never guess or fabricate a package_id. If multiple packages exist, confirm
-        which specific one the user wants to update before calling this tool.
+        PRE-CONDITION: Call get_travel_packages first to resolve the ID — unless the user's message
+        already contains a valid-looking Salesforce ID (15 or 18 alphanumeric characters),
+        in which case use it directly without this lookup. Never guess or fabricate a package_id.
+        If multiple packages exist, confirm which specific one the user wants to update before calling this tool.
         Only accepts a single Travel_Package__c ID.
 
         Args:
@@ -418,9 +420,10 @@ def build_update_payment_tool(salesforce_client, max_writes_per_session: int = 5
         """
         Request a Salesforce Payment record update. The system will pause for human approval.
 
-        PRE-CONDITION: Always call get_payments first to get the 18-char Salesforce ID.
-        Never guess or fabricate a payment_id. If multiple payments exist, confirm
-        which specific one the user wants to update before calling this tool.
+        PRE-CONDITION: Call get_payments first to resolve the ID — unless the user's message
+        already contains a valid-looking Salesforce ID (15 or 18 alphanumeric characters),
+        in which case use it directly without this lookup. Never guess or fabricate a payment_id.
+        If multiple payments exist, confirm which specific one the user wants to update before calling this tool.
         Only accepts a single Payment__c ID.
 
         Args:
