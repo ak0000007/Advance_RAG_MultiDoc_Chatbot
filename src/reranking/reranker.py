@@ -23,6 +23,7 @@ Future-proofing:
 
 from __future__ import annotations
 
+import asyncio
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableLambda
 
@@ -189,7 +190,8 @@ class CrossEncoderReranker:
     def wrap_retriever(self, retriever_runnable, top_k: int = 5):
         """
         Wraps an existing retriever Runnable, adding reranking.
-        Returns a new Runnable with the same interface.
+        Returns a new Runnable with the same interface, supporting both
+        sync (.invoke) and async (.ainvoke).
 
         This is the recommended integration point:
 
@@ -208,12 +210,13 @@ class CrossEncoderReranker:
                     docs = retriever_runnable.invoke(inputs)
                 else:
                     docs = retriever_runnable(inputs)
-            except AttributeError as e:
-                if "'dict' object" in str(e) and isinstance(inputs, dict) and "question" in inputs:
+            except (AttributeError, TypeError) as e:
+                if isinstance(inputs, dict) and "question" in inputs and ("'dict' object" in str(e) or "expected string" in str(e) or "str" in str(e)):
+                    target = inputs["question"]
                     if hasattr(retriever_runnable, "invoke"):
-                        docs = retriever_runnable.invoke(inputs["question"])
+                        docs = retriever_runnable.invoke(target)
                     else:
-                        docs = retriever_runnable(inputs["question"])
+                        docs = retriever_runnable(target)
                 else:
                     raise
 
@@ -225,4 +228,33 @@ class CrossEncoderReranker:
             )
             return self.rerank(question, docs, top_k=top_k)
 
-        return RunnableLambda(_retrieve_and_rerank)
+        async def _async_retrieve_and_rerank(inputs: dict) -> list[Document]:
+            # Step 1: Retrieve asynchronously using the original retriever
+            try:
+                if hasattr(retriever_runnable, "ainvoke"):
+                    docs = await retriever_runnable.ainvoke(inputs)
+                elif hasattr(retriever_runnable, "invoke"):
+                    docs = await asyncio.to_thread(retriever_runnable.invoke, inputs)
+                else:
+                    docs = await asyncio.to_thread(retriever_runnable, inputs)
+            except (AttributeError, TypeError) as e:
+                if isinstance(inputs, dict) and "question" in inputs and ("'dict' object" in str(e) or "expected string" in str(e) or "str" in str(e)):
+                    target = inputs["question"]
+                    if hasattr(retriever_runnable, "ainvoke"):
+                        docs = await retriever_runnable.ainvoke(target)
+                    elif hasattr(retriever_runnable, "invoke"):
+                        docs = await asyncio.to_thread(retriever_runnable.invoke, target)
+                    else:
+                        docs = await asyncio.to_thread(retriever_runnable, target)
+                else:
+                    raise
+
+            # Step 2: Rerank (CPU-bound cross-encoder inference offloaded to worker thread)
+            question = (
+                inputs.get("question", "")
+                if isinstance(inputs, dict)
+                else str(inputs)
+            )
+            return await asyncio.to_thread(self.rerank, question, docs, top_k=top_k)
+
+        return RunnableLambda(func=_retrieve_and_rerank, afunc=_async_retrieve_and_rerank)

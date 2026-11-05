@@ -30,10 +30,12 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
+from src.config import settings
 from src.telemetry import setup_langsmith
 setup_langsmith()
 
@@ -72,6 +74,15 @@ app = FastAPI(
     title="Advanced RAG Chatbot API",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# CORS middleware for cross-origin frontend support (Debt H9)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(router)

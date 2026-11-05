@@ -28,14 +28,16 @@ Remediate Tier 1 (P0) security vulnerabilities and critical pipeline crashes fro
 - [x] **H2 + H3: Ingestion Sync & Deduplication**: Added deterministic UUIDv5 ID generation in [`ingest.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/ingest.py); added pickle persistence & dedup to [`src/retrieval/bm25_store.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/retrieval/bm25_store.py); verified 4/4 tests in [`tests/test_ingest_sync.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_ingest_sync.py).
 - [x] **Multi-Agent Specialist Architecture**: Decomposed monolithic agent into 3 specialist subgraphs (`crm_agent`, `travel_agent`, `docs_agent`) with intent classification orchestrator in [`src/graph/orchestrator.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/orchestrator.py), prompts in [`src/graph/prompts.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/prompts.py), feature toggle `use_multi_agent_architecture` in [`src/config.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/config.py); verified 6/6 unit tests in [`tests/test_orchestrator.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_orchestrator.py); benchmarked 95.83% accuracy in both modes.
 
+- [x] **H4: Parallel Hybrid Retrieval**: Implemented async fan-out/fan-in via `asyncio.gather` & thread pool in [`src/retrieval/hybrid_retriever.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/retrieval/hybrid_retriever.py) & [`src/reranking/reranker.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/reranking/reranker.py); verified 4/4 tests in [`tests/test_parallel_retrieval.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_parallel_retrieval.py).
+- [x] **H9: CORS Middleware**: Added configurable `cors_origins` in [`src/config.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/config.py) and `CORSMiddleware` in [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py); verified 3/3 tests in [`tests/test_cors.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_cors.py).
+
 ---
 
 ## In Progress / Pending (P1 Scale & Enterprise Backlog)
 - [ ] **P1: Token Streaming**: Expose SSE endpoint via `graph.astream_events()`.
-- [ ] **P1: CORS Middleware**: Add `CORSMiddleware` in [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py) (Debt H9).
-- [ ] **P1: Parallel Hybrid Retrieval**: Parallelize dense + sparse retrieval with `asyncio.gather` in [`src/retrieval/hybrid_retriever.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/retrieval/hybrid_retriever.py) (Debt H4).
+- [ ] **P1: Persistent Salesforce Client Connection Pool**: Reusable `httpx.AsyncClient` in lifespan.
 
 ---
 
 ## Next Immediate Action
-1. Implement P1 item: Add CORS middleware in [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py) or begin SSE token streaming.
+1. Implement P1 item: Add SSE token streaming endpoint (`/chat/stream`).

@@ -9,9 +9,11 @@ Adding/removing retrieval sources requires no code change to
 existing stores — OCP satisfied.
 """
 
-from langchain_core.documents import Document
-from langchain_core.runnables import RunnableLambda 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
+from langchain_core.documents import Document
+from langchain_core.runnables import RunnableLambda
 
 
 def reciprocal_rank_fusion(
@@ -86,18 +88,54 @@ class HybridRetriever:
         self.final_k = final_k
         self.rrf_k = rrf_k
 
-    def search(self, query: str) -> list[Document]:
-        """Run all retrievers, fuse results via RRF, return top final_k."""
-        all_results: list[list[Document]] = []
-        for retriever in self.retrievers:
-            # Support both Runnable.invoke() and plain callables
+    @staticmethod
+    def _invoke_retriever_sync(retriever, q):
+        try:
             if hasattr(retriever, "invoke"):
-                docs = retriever.invoke(query)
-            else:
-                docs = retriever(query)
-            all_results.append(docs)
+                return retriever.invoke(q)
+            return retriever(q)
+        except (AttributeError, TypeError) as e:
+            if isinstance(q, dict) and "question" in q and ("'dict' object" in str(e) or "expected string" in str(e) or "str" in str(e)):
+                target = q["question"]
+                if hasattr(retriever, "invoke"):
+                    return retriever.invoke(target)
+                return retriever(target)
+            raise
+
+    @staticmethod
+    async def _invoke_retriever_async(retriever, q):
+        try:
+            if hasattr(retriever, "ainvoke"):
+                return await retriever.ainvoke(q)
+            elif hasattr(retriever, "invoke"):
+                return await asyncio.to_thread(retriever.invoke, q)
+            return await asyncio.to_thread(retriever, q)
+        except (AttributeError, TypeError) as e:
+            if isinstance(q, dict) and "question" in q and ("'dict' object" in str(e) or "expected string" in str(e) or "str" in str(e)):
+                target = q["question"]
+                if hasattr(retriever, "ainvoke"):
+                    return await retriever.ainvoke(target)
+                elif hasattr(retriever, "invoke"):
+                    return await asyncio.to_thread(retriever.invoke, target)
+                return await asyncio.to_thread(retriever, target)
+            raise
+
+    def search(self, query: str | dict) -> list[Document]:
+        """Run all retrievers concurrently in a thread pool, fuse results via RRF."""
+        if len(self.retrievers) == 1:
+            all_results = [self._invoke_retriever_sync(self.retrievers[0], query)]
+        else:
+            with ThreadPoolExecutor(max_workers=len(self.retrievers)) as executor:
+                all_results = list(executor.map(lambda r: self._invoke_retriever_sync(r, query), self.retrievers))
 
         fused = reciprocal_rank_fusion(all_results, k=self.rrf_k)
+        return fused[: self.final_k]
+
+    async def asearch(self, query: str | dict) -> list[Document]:
+        """Run all retrievers concurrently via asyncio.gather, fuse results via RRF."""
+        tasks = [self._invoke_retriever_async(r, query) for r in self.retrievers]
+        all_results = await asyncio.gather(*tasks)
+        fused = reciprocal_rank_fusion(list(all_results), k=self.rrf_k)
         return fused[: self.final_k]
 
     # ------------------------------------------------------------------
@@ -110,7 +148,10 @@ class HybridRetriever:
         def _retrieve(query: str) -> list[Document]:
             return self.search(query)
 
-        return RunnableLambda(_retrieve)
+        async def _aretrieve(query: str) -> list[Document]:
+            return await self.asearch(query)
+
+        return RunnableLambda(func=_retrieve, afunc=_aretrieve)
 
     def as_dynamic_retriever(self):
         """
@@ -122,25 +163,9 @@ class HybridRetriever:
         """
 
         def _retrieve(inputs: dict) -> list[Document]:
-            question = inputs.get("question", "")
-            all_results: list[list[Document]] = []
-            for retriever in self.retrievers:
-                try:
-                    if hasattr(retriever, "invoke"):
-                        docs = retriever.invoke(inputs)
-                    else:
-                        docs = retriever(inputs)
-                except AttributeError as e:
-                    if "'dict' object" in str(e):
-                        if hasattr(retriever, "invoke"):
-                            docs = retriever.invoke(question)
-                        else:
-                            docs = retriever(question)
-                    else:
-                        raise
-                all_results.append(docs)
+            return self.search(inputs)
 
-            fused = reciprocal_rank_fusion(all_results, k=self.rrf_k)
-            return fused[: self.final_k]
+        async def _aretrieve(inputs: dict) -> list[Document]:
+            return await self.asearch(inputs)
 
-        return RunnableLambda(_retrieve)
+        return RunnableLambda(func=_retrieve, afunc=_aretrieve)

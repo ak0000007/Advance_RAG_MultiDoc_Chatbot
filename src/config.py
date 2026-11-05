@@ -1,5 +1,7 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import json
 from functools import lru_cache
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     google_api_key: str | None = None
@@ -32,6 +34,22 @@ class Settings(BaseSettings):
 
     # Multi-agent architecture toggle: routes through orchestrator + 3 specialist subgraphs
     use_multi_agent_architecture: bool = False
+
+    # CORS Configuration (Debt H9)
+    cors_origins: list[str] = ["*"]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        if isinstance(v, str):
+            v_str = v.strip()
+            if v_str.startswith("["):
+                try:
+                    return json.loads(v_str)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v_str.split(",") if origin.strip()]
+        return v
 
     model_config = SettingsConfigDict(
         env_file=".env",
