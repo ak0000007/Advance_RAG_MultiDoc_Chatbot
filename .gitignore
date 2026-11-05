@@ -57,3 +57,7 @@ scratch/
 .agents/
 .github/context-mode/
 
+# Generated HTML documentation
+docs/*.html
+*.html
+
