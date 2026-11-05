@@ -15,6 +15,13 @@ from typing import Any, Optional
 # Prevents hung requests from blocking the graph node indefinitely.
 _TIMEOUT = httpx.Timeout(10.0)
 
+# Connection pool limits for persistent client: keeps connections alive, caps total sockets
+_DEFAULT_LIMITS = httpx.Limits(
+    max_keepalive_connections=20,
+    max_connections=50,
+    keepalive_expiry=30.0,
+)
+
 # Cache tokens for 4 minutes (JWT exp is 5 min). Leaves 60s safety margin.
 _TOKEN_TTL = 240
 
@@ -47,6 +54,7 @@ class SalesforceAsyncClient:
         login_url: str,
         private_key_path: str,
         domain: str,
+        http_client: Optional[httpx.AsyncClient] = None,
     ):
         self.client_id = client_id
         self.login_url = login_url.rstrip("/")
@@ -56,6 +64,27 @@ class SalesforceAsyncClient:
         self._private_key = self._load_private_key()
         # {username: (token, expiry_timestamp)}
         self._token_cache: dict[str, tuple[str, float]] = {}
+        self._client = http_client
+        self._owns_client = http_client is None
+
+    @property
+    def http_client(self) -> httpx.AsyncClient:
+        """Return active connection-pooled AsyncClient or instantiate on demand."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=_TIMEOUT, limits=_DEFAULT_LIMITS)
+            self._owns_client = True
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close persistent HTTP client and release connection pool sockets."""
+        if self._owns_client and self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+
+    async def __aenter__(self) -> "SalesforceAsyncClient":
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.aclose()
 
     def _load_private_key(self) -> str:
         if not self.private_key_path.exists():
@@ -83,16 +112,15 @@ class SalesforceAsyncClient:
 
         encoded_jwt = jwt.encode(payload, self._private_key, algorithm="RS256")
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(
-                f"{self.login_url}/services/oauth2/token",
-                data={
-                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                    "assertion": encoded_jwt,
-                },
-            )
-            resp.raise_for_status()
-            token = resp.json()["access_token"]
+        resp = await self.http_client.post(
+            f"{self.login_url}/services/oauth2/token",
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": encoded_jwt,
+            },
+        )
+        resp.raise_for_status()
+        token = resp.json()["access_token"]
 
         self._token_cache[username] = (token, now + _TOKEN_TTL)
         return token
@@ -106,14 +134,13 @@ class SalesforceAsyncClient:
         url = f"{self.domain}/services/apexrest/AgentOpportunities"
         params = {"search": search} if search else {}
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                params=params,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self.http_client.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def update_opportunity_status(
         self, username: str, opportunity_id: str, new_status: str, idempotency_key: Optional[str] = None
@@ -141,18 +168,17 @@ class SalesforceAsyncClient:
             # Used by downstream systems to deduplicate retry requests.
             headers["Idempotency-Key"] = idempotency_key
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.patch(
-                url,
-                headers=headers,
-                json=payload,
-            )
-            # 5xx = server fault → raise so caller sees an exception
-            # 4xx = business error → return structured JSON for the agent to report
-            if resp.status_code >= 500:
-                resp.raise_for_status()
+        resp = await self.http_client.patch(
+            url,
+            headers=headers,
+            json=payload,
+        )
+        # 5xx = server fault → raise so caller sees an exception
+        # 4xx = business error → return structured JSON for the agent to report
+        if resp.status_code >= 500:
+            resp.raise_for_status()
 
-            return resp.json()
+        return resp.json()
 
     # ── Internal helper ──────────────────────────────────────────────────────
 
@@ -163,19 +189,18 @@ class SalesforceAsyncClient:
         clean_name = re.sub(r'[\x00-\x1f\x7f]', '', name).strip()[:255]
         safe_name = clean_name.replace('\\', '\\\\').replace("'", "\\'")
         url = f"{self.domain}/services/data/v60.0/query"
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                params={"q": f"SELECT Id FROM {sobject} WHERE Name = '{safe_name}' LIMIT 1"},
-            )
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            if isinstance(data, dict):
-                records = data.get("records", [])
-                return records[0]["Id"] if records else None
+        resp = await self.http_client.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            params={"q": f"SELECT Id FROM {sobject} WHERE Name = '{safe_name}' LIMIT 1"},
+        )
+        if resp.status_code != 200:
             return None
+        data = resp.json()
+        if isinstance(data, dict):
+            records = data.get("records", [])
+            return records[0]["Id"] if records else None
+        return None
 
     # ── Booking APIs ─────────────────────────────────────────────────────────
 
@@ -192,14 +217,13 @@ class SalesforceAsyncClient:
                 booking_id = resolved
             params["bookingId"] = booking_id
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                f"{self.domain}/services/apexrest/Agent/Booking/Get/",
-                headers={"Authorization": f"Bearer {token}"},
-                params=params,
-            )
-            resp.raise_for_status()
-            return _parse_api_response(resp)
+        resp = await self.http_client.get(
+            f"{self.domain}/services/apexrest/Agent/Booking/Get/",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+        )
+        resp.raise_for_status()
+        return _parse_api_response(resp)
 
     async def update_booking(
         self,
@@ -215,15 +239,14 @@ class SalesforceAsyncClient:
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.patch(
-                f"{self.domain}/services/apexrest/Agent/Booking/Update/",
-                headers=headers,
-                json=payload,
-            )
-            if resp.status_code >= 500:
-                resp.raise_for_status()
-            return _parse_api_response(resp)
+        resp = await self.http_client.patch(
+            f"{self.domain}/services/apexrest/Agent/Booking/Update/",
+            headers=headers,
+            json=payload,
+        )
+        if resp.status_code >= 500:
+            resp.raise_for_status()
+        return _parse_api_response(resp)
 
     # ── Travel Package APIs ──────────────────────────────────────────────────
 
@@ -234,14 +257,13 @@ class SalesforceAsyncClient:
         token = await self.get_access_token(username)
         params = {"packageId": package_id} if package_id else {}
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                f"{self.domain}/services/apexrest/Agent/TravelPackage/Get/",
-                headers={"Authorization": f"Bearer {token}"},
-                params=params,
-            )
-            resp.raise_for_status()
-            return _parse_api_response(resp)
+        resp = await self.http_client.get(
+            f"{self.domain}/services/apexrest/Agent/TravelPackage/Get/",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+        )
+        resp.raise_for_status()
+        return _parse_api_response(resp)
 
     async def update_travel_package(
         self,
@@ -257,15 +279,14 @@ class SalesforceAsyncClient:
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.patch(
-                f"{self.domain}/services/apexrest/Agent/TravelPackage/Update/",
-                headers=headers,
-                json=payload,
-            )
-            if resp.status_code >= 500:
-                resp.raise_for_status()
-            return _parse_api_response(resp)
+        resp = await self.http_client.patch(
+            f"{self.domain}/services/apexrest/Agent/TravelPackage/Update/",
+            headers=headers,
+            json=payload,
+        )
+        if resp.status_code >= 500:
+            resp.raise_for_status()
+        return _parse_api_response(resp)
 
     # ── Payment APIs ─────────────────────────────────────────────────────────
 
@@ -290,14 +311,13 @@ class SalesforceAsyncClient:
                 bid = resolved
             params["bookingId"] = bid
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                f"{self.domain}/services/apexrest/Agent/Payment/Get/",
-                headers={"Authorization": f"Bearer {token}"},
-                params=params,
-            )
-            resp.raise_for_status()
-            return _parse_api_response(resp)
+        resp = await self.http_client.get(
+            f"{self.domain}/services/apexrest/Agent/Payment/Get/",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+        )
+        resp.raise_for_status()
+        return _parse_api_response(resp)
 
     async def update_payment(
         self,
@@ -313,12 +333,11 @@ class SalesforceAsyncClient:
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.patch(
-                f"{self.domain}/services/apexrest/Agent/Payment/Update/",
-                headers=headers,
-                json=payload,
-            )
-            if resp.status_code >= 500:
-                resp.raise_for_status()
-            return _parse_api_response(resp)
+        resp = await self.http_client.patch(
+            f"{self.domain}/services/apexrest/Agent/Payment/Update/",
+            headers=headers,
+            json=payload,
+        )
+        if resp.status_code >= 500:
+            resp.raise_for_status()
+        return _parse_api_response(resp)

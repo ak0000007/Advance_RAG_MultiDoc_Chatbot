@@ -30,14 +30,17 @@ Remediate Tier 1 (P0) security vulnerabilities and critical pipeline crashes fro
 
 - [x] **H4: Parallel Hybrid Retrieval**: Implemented async fan-out/fan-in via `asyncio.gather` & thread pool in [`src/retrieval/hybrid_retriever.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/retrieval/hybrid_retriever.py) & [`src/reranking/reranker.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/reranking/reranker.py); verified 4/4 tests in [`tests/test_parallel_retrieval.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_parallel_retrieval.py).
 - [x] **H9: CORS Middleware**: Added configurable `cors_origins` in [`src/config.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/config.py) and `CORSMiddleware` in [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py); verified 3/3 tests in [`tests/test_cors.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_cors.py).
+- [x] **P1: Token Streaming (SSE)**: Added `/chat/stream` & `/chat/resume/stream` via `graph.astream_events(version="v2")` in [`src/api/routes.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/routes.py); wired live streaming & tool status into [`src/ui/static/app.js`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/ui/static/app.js); verified 5/5 unit tests in [`tests/test_streaming.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_streaming.py).
+- [x] **H1: Salesforce Client Connection Pooling**: Persistent `httpx.AsyncClient` with keep-alive limits, auto-recovery, ownership tracking, and lifespan teardown in [`src/clients/salesforce_client.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/clients/salesforce_client.py) and [`src/api/app.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/api/app.py); verified 7/7 tests in [`tests/test_salesforce_client_pooling.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_salesforce_client_pooling.py).
+- [x] **H14: Thread-Safe CrossEncoder Lazy Init**: Double-checked locking with `threading.Lock` and `asyncio.Lock` in [`src/reranking/reranker.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/reranking/reranker.py); verified 4/4 concurrency tests in [`tests/test_reranker_thread_safety.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/tests/test_reranker_thread_safety.py).
 
 ---
 
 ## In Progress / Pending (P1 Scale & Enterprise Backlog)
-- [ ] **P1: Token Streaming**: Expose SSE endpoint via `graph.astream_events()`.
-- [ ] **P1: Persistent Salesforce Client Connection Pool**: Reusable `httpx.AsyncClient` in lifespan.
+- [ ] **P1: SecretStr for API Keys & Passwords**: Prevent key leaks in tracebacks/repr (debt H8).
+- [ ] **P1: Path Traversal Sandboxing**: Secure `load_file()` directory jail in [`src/ingestion/loader.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/ingestion/loader.py) (debt H13).
 
 ---
 
 ## Next Immediate Action
-1. Implement P1 item: Add SSE token streaming endpoint (`/chat/stream`).
+1. Implement P1 item: Wrap sensitive credentials with `SecretStr` in [`src/config.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/config.py) (H8).

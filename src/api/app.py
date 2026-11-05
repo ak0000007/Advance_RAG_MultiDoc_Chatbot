@@ -47,14 +47,17 @@ from src.api.dependencies import get_compiled_graph
 async def lifespan(app: FastAPI):
     """
     Eagerly build graph and initialize shared DB pool + audit tables at startup.
+    Cleanly shuts down DB connection pool and Salesforce HTTP connection pool on exit.
     """
-    from src.api.dependencies import get_db_pool
+    from src.api.dependencies import get_db_pool, get_salesforce_client
     from src.audit.log import init_audit_table
 
     pool = get_db_pool()
     if pool is not None:
         await pool.open()
         await init_audit_table(pool)
+
+    sf_client = get_salesforce_client()
 
     graph = get_compiled_graph()
     if hasattr(graph, "checkpointer") and hasattr(graph.checkpointer, "setup"):
@@ -67,6 +70,9 @@ async def lifespan(app: FastAPI):
 
     if pool is not None:
         await pool.close()
+
+    if sf_client is not None:
+        await sf_client.aclose()
 
 
 

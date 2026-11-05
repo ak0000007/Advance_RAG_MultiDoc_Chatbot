@@ -24,6 +24,7 @@ Future-proofing:
 from __future__ import annotations
 
 import asyncio
+import threading
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableLambda
 
@@ -63,18 +64,41 @@ class CrossEncoderReranker:
         self.model_name = model_name
         self._device = device
         self._model = None  # Lazy-loaded
+        self._thread_lock = threading.Lock()
+        self._async_lock: asyncio.Lock | None = None
+
+    @property
+    def async_lock(self) -> asyncio.Lock:
+        """Lazy-initialize asyncio.Lock on the active event loop."""
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        return self._async_lock
 
     def _load_model(self):
-        """Lazy-load the cross-encoder. First call pays the cost."""
+        """Lazy-load the cross-encoder. Thread-safe double-checked locking."""
         if self._model is not None:
             return
 
-        from sentence_transformers import CrossEncoder
+        with self._thread_lock:
+            if self._model is not None:
+                return
 
-        self._model = CrossEncoder(
-            self.model_name,
-            device=self._device,
-        )
+            from sentence_transformers import CrossEncoder
+
+            self._model = CrossEncoder(
+                self.model_name,
+                device=self._device,
+            )
+
+    async def _load_model_async(self):
+        """Asynchronously ensure model is loaded without blocking the event loop."""
+        if self._model is not None:
+            return
+
+        async with self.async_lock:
+            if self._model is not None:
+                return
+            await asyncio.to_thread(self._load_model)
 
     def rerank(
         self,
@@ -229,7 +253,10 @@ class CrossEncoderReranker:
             return self.rerank(question, docs, top_k=top_k)
 
         async def _async_retrieve_and_rerank(inputs: dict) -> list[Document]:
-            # Step 1: Retrieve asynchronously using the original retriever
+            # Step 1: Ensure CrossEncoder model is loaded safely without race conditions
+            await self._load_model_async()
+
+            # Step 2: Retrieve asynchronously using the original retriever
             try:
                 if hasattr(retriever_runnable, "ainvoke"):
                     docs = await retriever_runnable.ainvoke(inputs)
