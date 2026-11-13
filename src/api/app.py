@@ -83,10 +83,12 @@ app = FastAPI(
 )
 
 # CORS middleware for cross-origin frontend support (Debt H9)
+# Per W3C CORS spec: allow_credentials MUST NOT be True when allow_origins contains "*"
+has_wildcard = "*" in settings.cors_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=not has_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )

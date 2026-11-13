@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -56,7 +59,7 @@ class Qwen3ChatModel(BaseChatModel):
     def _load_model(self) -> None:
         """Load tokenizer and quantized Qwen model."""
 
-        print(f"Loading local Qwen model: {self.model_id}")
+        logger.info("Loading local Qwen model: %s", self.model_id)
 
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.model_id
@@ -76,7 +79,7 @@ class Qwen3ChatModel(BaseChatModel):
             torch_dtype=torch.float16,
         )
 
-        print("Qwen model loaded successfully.")
+        logger.info("Qwen model loaded successfully.")
 
     def _generate(
         self,

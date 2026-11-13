@@ -21,27 +21,9 @@ async def _get_conn(pool_or_conn):
 
 
 async def init_audit_table(pool) -> None:
-    """Initialize write_audit_log table and indexes if they do not exist."""
-    async with _get_conn(pool) as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS write_audit_log (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                thread_id TEXT NOT NULL,
-                sf_username TEXT NOT NULL,
-                action_type TEXT NOT NULL,
-                record_id TEXT NOT NULL,
-                record_name TEXT,
-                idempotency_key TEXT NOT NULL UNIQUE,
-                proposed_payload JSONB NOT NULL,
-                decision TEXT,
-                status TEXT NOT NULL,
-                result JSONB,
-                created_at TIMESTAMPTZ DEFAULT now(),
-                updated_at TIMESTAMPTZ DEFAULT now()
-            );
-            CREATE INDEX IF NOT EXISTS idx_audit_thread ON write_audit_log(thread_id);
-            CREATE INDEX IF NOT EXISTS idx_audit_user ON write_audit_log(sf_username);
-        """)
+    """Initialize write_audit_log table and schema migrations."""
+    from src.audit.migrations import run_migrations
+    await run_migrations(pool)
 
 
 async def record_proposed(

@@ -969,3 +969,69 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Source Citations ───────────────────────────────────────────────────── */
+.citation-list {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.citation-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-light, #818cf8);
+}
+
+.citation-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.citation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 0.75rem;
+  color: var(--text-sub, #cbd5e1);
+  cursor: help;
+  transition: all 0.2s ease;
+}
+
+.citation-chip:hover {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.4);
+  transform: translateY(-1px);
+}
+
+.citation-num {
+  font-weight: 700;
+  color: var(--accent-light, #818cf8);
+}
+
+.citation-title {
+  font-weight: 500;
+}
+
+.chunk-badge {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: monospace;
+  font-size: 0.68rem;
+  color: #94a3b8;
+}

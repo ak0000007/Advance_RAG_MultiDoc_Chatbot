@@ -1,5 +1,6 @@
 import asyncio
 import time
+from unittest.mock import MagicMock
 import pytest
 from langchain_core.documents import Document
 from src.retrieval.hybrid_retriever import HybridRetriever, reciprocal_rank_fusion
@@ -112,6 +113,7 @@ async def test_reranker_wrap_retriever_async(monkeypatch):
     r = AsyncMockRetriever(name="mock", delay=0.01, docs=[doc1, doc2])
 
     reranker = CrossEncoderReranker()
+    reranker._model = MagicMock()
     # Mock rerank to avoid downloading/loading CrossEncoder model during test
     monkeypatch.setattr(
         reranker,

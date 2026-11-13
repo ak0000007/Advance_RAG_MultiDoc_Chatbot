@@ -7,7 +7,7 @@ Independent of any vector store — satisfies SRP and DIP.
 
 import math
 import pickle
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from langchain_core.documents import Document
@@ -33,6 +33,7 @@ class BM25Store:
         self._doc_freqs: list[Counter] = []
         self._avg_dl: float = 0.0
         self._idf: dict[str, float] = {}
+        self._inverted_index: dict[str, list[int]] = {}
 
     # ------------------------------------------------------------------
     # Indexing & Deduplication
@@ -80,6 +81,7 @@ class BM25Store:
             "doc_freqs": self._doc_freqs,
             "avg_dl": self._avg_dl,
             "idf": self._idf,
+            "inverted_index": self._inverted_index,
         }
         with open(path, "wb") as f:
             pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -99,6 +101,9 @@ class BM25Store:
         store._doc_freqs = payload.get("doc_freqs", [])
         store._avg_dl = payload.get("avg_dl", 0.0)
         store._idf = payload.get("idf", {})
+        store._inverted_index = payload.get("inverted_index", {})
+        if not store._inverted_index and store._documents:
+            store._build_index()
         return store
 
     def _tokenize(self, text: str) -> list[str]:
@@ -115,11 +120,15 @@ class BM25Store:
         n_docs = len(self._documents)
         self._avg_dl = total_tokens / n_docs if n_docs else 1.0
 
-        # IDF: log((N - df + 0.5) / (df + 0.5) + 1)
+        # Build inverted index & IDF
+        inverted: dict[str, list[int]] = defaultdict(list)
         df_counts: Counter = Counter()
-        for tf in self._doc_freqs:
-            df_counts.update(tf.keys())
+        for idx, tf in enumerate(self._doc_freqs):
+            for term in tf.keys():
+                inverted[term].append(idx)
+                df_counts[term] += 1
 
+        self._inverted_index = dict(inverted)
         self._idf = {}
         for term, df in df_counts.items():
             self._idf[term] = math.log(
@@ -154,15 +163,27 @@ class BM25Store:
     ) -> list[Document]:
         """
         Return top-k documents by BM25 score.
+        Uses inverted index for fast sparse candidate filtering.
         Optional metadata_filter for exact-match filtering.
         """
         if not self._documents:
             return []
 
         query_tokens = self._tokenize(query)
+        if not query_tokens:
+            return []
+
+        # Inverted index lookup: only evaluate documents that contain at least one query token
+        candidate_indices = set()
+        for token in query_tokens:
+            if token in self._inverted_index:
+                candidate_indices.update(self._inverted_index[token])
+
+        if not candidate_indices:
+            return []
 
         scored: list[tuple[float, int]] = []
-        for idx in range(len(self._documents)):
+        for idx in candidate_indices:
             # Apply metadata filter
             if metadata_filter:
                 doc_meta = self._documents[idx].metadata
@@ -171,7 +192,9 @@ class BM25Store:
                     for key, value in metadata_filter.items()
                 ):
                     continue
-            scored.append((self._score(query_tokens, idx), idx))
+            s = self._score(query_tokens, idx)
+            if s > 0:
+                scored.append((s, idx))
 
         scored.sort(key=lambda x: x[0], reverse=True)
 

@@ -160,6 +160,62 @@ function removeTypingIndicator() {
   document.getElementById('typing-row')?.remove();
 }
 
+// ── Citations renderer ────────────────────────────────────────────────────────
+function renderCitations(bubble, citations) {
+  if (!bubble || !citations || !citations.length) return;
+  if (bubble.querySelector('.citation-list')) return;
+
+  const container = document.createElement('div');
+  container.className = 'citation-list';
+
+  const header = document.createElement('div');
+  header.className = 'citation-header';
+  header.innerHTML = `
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+      <path d="M6 6h10"/><path d="M6 10h10"/>
+    </svg>
+    <span>Retrieved Sources (${citations.length})</span>
+  `;
+  container.appendChild(header);
+
+  const chips = document.createElement('div');
+  chips.className = 'citation-chips';
+
+  citations.forEach((c, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'citation-chip';
+    const title = c.title || c.source || `Document ${idx + 1}`;
+    const pageText = (c.page !== null && c.page !== undefined) ? ` • p. ${c.page}` : '';
+    const chunkTag = c.chunk_id ? `<span class="chunk-badge">${c.chunk_id.slice(0, 8)}</span>` : '';
+
+    if (c.snippet) {
+      chip.setAttribute('title', c.snippet);
+    }
+    chip.innerHTML = `<span class="citation-num">[${idx + 1}]</span> <span class="citation-title">${title}${pageText}</span> ${chunkTag}`;
+    chips.appendChild(chip);
+  });
+
+  container.appendChild(chips);
+  bubble.appendChild(container);
+  const viewport = chatWrap.closest('.chat-viewport') || chatWrap;
+  viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+}
+
+// ── Trace ID renderer ────────────────────────────────────────────────────────
+function renderTraceId(bubble, traceId) {
+  if (!bubble || !traceId) return;
+  if (bubble.querySelector('.trace-badge')) return;
+  const traceEl = document.createElement('div');
+  traceEl.className = 'trace-badge';
+  traceEl.style.fontSize = '0.72rem';
+  traceEl.style.color = '#718096';
+  traceEl.style.marginTop = '6px';
+  traceEl.textContent = `Trace: ${traceId.slice(0, 8)}...`;
+  traceEl.title = `Distributed Trace ID: ${traceId}`;
+  bubble.appendChild(traceEl);
+}
+
 // ── Approval panel ────────────────────────────────────────────────────────────
 function showApproval(payload) {
   interrupted = true;
@@ -183,6 +239,52 @@ function hideApproval() {
   approvalPanel.classList.remove('visible');
 }
 
+// ── SSE Stream Helper ─────────────────────────────────────────────────────────
+async function consumeSSEStream(response, onStatus, onToken, onInterrupt, onDone, onError) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split('\n\n');
+    buffer = blocks.pop(); // keep trailing partial block
+
+    for (const block of blocks) {
+      if (!block.trim()) continue;
+      let eventType = 'message';
+      let dataStr = '';
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          dataStr = line.slice(6).trim();
+        }
+      }
+      if (!dataStr) continue;
+      try {
+        const payload = JSON.parse(dataStr);
+        const ev = eventType || payload.event;
+        if (ev === 'token') {
+          onToken(payload.chunk || '');
+        } else if (ev === 'status') {
+          onStatus(payload.message || '');
+        } else if (ev === 'interrupt') {
+          onInterrupt(payload);
+        } else if (ev === 'done') {
+          onDone(payload);
+        } else if (ev === 'error') {
+          onError(payload.detail || 'Streaming execution failed');
+        }
+      } catch (err) {
+        console.warn('SSE block parse error:', err, dataStr);
+      }
+    }
+  }
+}
+
 // ── Core API calls ────────────────────────────────────────────────────────────
 async function sendChat(question) {
   setLoading(true);
@@ -196,30 +298,77 @@ async function sendChat(question) {
       sf_username: sfUsernameEl.value.trim() || undefined,
     };
 
-    const r = await fetch(`${API}/chat`, {
+    const r = await fetch(`${API}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
-    removeTypingIndicator();
-
     if (!r.ok) {
+      removeTypingIndicator();
       const err = await r.json().catch(() => ({ detail: r.statusText }));
       addMessage('assistant', `⚠️ **Error ${r.status}**: ${err.detail ?? r.statusText}`);
       return;
     }
 
-    const data = await r.json();
-    console.debug('[RAG] /chat response:', data);
-    setThread(data.thread_id ?? threadId);
+    let bubble = null;
+    let streamedText = '';
 
-    if (data.interrupted === true) {
-      addMessage('assistant', `⏸ **Approval Required**: The agent needs confirmation before proceeding with this write operation.`);
-      showApproval(data.approval_request ?? {});
-    } else {
-      addMessage('assistant', data.answer || '(empty response)');
-    }
+    await consumeSSEStream(
+      r,
+      // onStatus
+      (statusMsg) => {
+        const typingBubble = document.querySelector('#typing-row .bubble');
+        if (typingBubble) {
+          typingBubble.innerHTML = `<span style="font-size:0.8rem; opacity:0.85; margin-right:8px;">⚡ ${statusMsg}</span><div class="typing-dots" style="display:inline-flex;"><span></span><span></span><span></span></div>`;
+        }
+      },
+      // onToken
+      (chunk) => {
+        if (!bubble) {
+          removeTypingIndicator();
+          bubble = addMessage('assistant', '');
+        }
+        streamedText += chunk;
+        if (window.marked) {
+          try {
+            bubble.innerHTML = marked.parse(streamedText);
+          } catch {
+            bubble.textContent = streamedText;
+          }
+        } else {
+          bubble.textContent = streamedText;
+        }
+        const viewport = chatWrap.closest('.chat-viewport') || chatWrap;
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+      },
+      // onInterrupt
+      (data) => {
+        removeTypingIndicator();
+        setThread(data.thread_id ?? threadId);
+        addMessage('assistant', `⏸ **Approval Required**: The agent needs confirmation before proceeding with this write operation.`);
+        showApproval(data.approval_request ?? {});
+      },
+      // onDone
+      (data) => {
+        removeTypingIndicator();
+        setThread(data.thread_id ?? threadId);
+        if (!bubble && data.answer) {
+          bubble = addMessage('assistant', data.answer);
+        }
+        if (data.citations && data.citations.length > 0) {
+          renderCitations(bubble, data.citations);
+        }
+        if (data.trace_id) {
+          renderTraceId(bubble, data.trace_id);
+        }
+      },
+      // onError
+      (detail) => {
+        removeTypingIndicator();
+        addMessage('assistant', `⚠️ **Error**: ${detail}`);
+      }
+    );
   } catch (e) {
     removeTypingIndicator();
     addMessage('assistant', `⚠️ **Network Error**: ${e.message}`);
@@ -234,29 +383,77 @@ async function sendResume(decision) {
   addTypingIndicator();
 
   try {
-    const r = await fetch(`${API}/chat/resume`, {
+    const r = await fetch(`${API}/chat/resume/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ thread_id: threadId, decision }),
     });
 
-    removeTypingIndicator();
     hideApproval();
 
     if (!r.ok) {
+      removeTypingIndicator();
       const err = await r.json().catch(() => ({ detail: r.statusText }));
       addMessage('assistant', `⚠️ **Resume Error ${r.status}**: ${err.detail ?? r.statusText}`);
       return;
     }
 
-    const data = await r.json();
-    addMessage('assistant', `**[${decision}]** — ${data.answer || '(action completed)'}`);
+    let bubble = null;
+    let streamedText = '';
 
-    // Edge case: another approval in chain
-    if (data.interrupted) {
-      showApproval(data.approval_request ?? {});
-    }
-
+    await consumeSSEStream(
+      r,
+      // onStatus
+      (statusMsg) => {
+        const typingBubble = document.querySelector('#typing-row .bubble');
+        if (typingBubble) {
+          typingBubble.innerHTML = `<span style="font-size:0.8rem; opacity:0.85; margin-right:8px;">⚡ ${statusMsg}</span><div class="typing-dots" style="display:inline-flex;"><span></span><span></span><span></span></div>`;
+        }
+      },
+      // onToken
+      (chunk) => {
+        if (!bubble) {
+          removeTypingIndicator();
+          bubble = addMessage('assistant', `**[${decision}]** — `);
+          streamedText = `**[${decision}]** — `;
+        }
+        streamedText += chunk;
+        if (window.marked) {
+          try {
+            bubble.innerHTML = marked.parse(streamedText);
+          } catch {
+            bubble.textContent = streamedText;
+          }
+        } else {
+          bubble.textContent = streamedText;
+        }
+        const viewport = chatWrap.closest('.chat-viewport') || chatWrap;
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+      },
+      // onInterrupt
+      (data) => {
+        removeTypingIndicator();
+        showApproval(data.approval_request ?? {});
+      },
+      // onDone
+      (data) => {
+        removeTypingIndicator();
+        if (!bubble && data.answer) {
+          bubble = addMessage('assistant', `**[${decision}]** — ${data.answer}`);
+        }
+        if (data.citations && data.citations.length > 0) {
+          renderCitations(bubble, data.citations);
+        }
+        if (data.trace_id) {
+          renderTraceId(bubble, data.trace_id);
+        }
+      },
+      // onError
+      (detail) => {
+        removeTypingIndicator();
+        addMessage('assistant', `⚠️ **Resume Error**: ${detail}`);
+      }
+    );
   } catch (e) {
     removeTypingIndicator();
     addMessage('assistant', `⚠️ **Network Error**: ${e.message}`);

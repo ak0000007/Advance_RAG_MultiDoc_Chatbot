@@ -39,6 +39,10 @@ def main():
         cid = generate_chunk_id(chunk, idx)
         chunk.id = cid
         chunk.metadata["chunk_id"] = cid
+        if "title" not in chunk.metadata:
+            candidate_title = chunk.metadata.get("file_name") or Path(chunk.metadata.get("source", "")).name
+            if candidate_title:
+                chunk.metadata["title"] = candidate_title
         doc_ids.append(cid)
     
     print(f"Embedding and storing {len(chunks)} chunks in Qdrant (idempotent upsert)...")
@@ -49,7 +53,7 @@ def main():
             embeddings=embeddings, 
             collection_name="multidoc_rag", 
             url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key
+            api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None
         )
     else:
         qdrant = QdrantStore(

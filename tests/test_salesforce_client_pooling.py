@@ -134,3 +134,44 @@ async def test_pooled_requests_use_shared_client(mock_sf_client):
             mock_get.assert_called_once()
             assert "Authorization" in mock_get.call_args.kwargs["headers"]
             assert mock_get.call_args.kwargs["headers"]["Authorization"] == "Bearer fake_access_token"
+
+
+@pytest.mark.asyncio
+async def test_non_json_4xx_error_handled_safely(mock_sf_client):
+    """Verify that a 4xx response with an HTML/text error body does not crash with JSONDecodeError."""
+    html_error_response = httpx.Response(
+        status_code=400,
+        content=b"<html><body>Bad Request</body></html>",
+        headers={"Content-Type": "text/html"},
+        request=httpx.Request("PATCH", "https://test.my.salesforce.com"),
+    )
+    with patch.object(mock_sf_client, "get_access_token", return_value="fake_access_token"):
+        with patch.object(mock_sf_client.http_client, "patch", return_value=html_error_response):
+            res = await mock_sf_client.update_opportunity_status(
+                username="agent@travel.com",
+                opportunity_id="006xx000001AAAAAA",
+                new_status="Closed Won",
+            )
+            assert res["isSuccess"] is False
+            assert "Bad Request" in res["message"]
+
+
+@pytest.mark.asyncio
+async def test_retry_on_429_rate_limit(mock_sf_client):
+    """Verify client retries automatically when receiving 429 Too Many Requests."""
+    resp_429 = httpx.Response(
+        status_code=429,
+        headers={"Retry-After": "0"},
+        request=httpx.Request("GET", "https://test.my.salesforce.com"),
+    )
+    resp_200 = httpx.Response(
+        status_code=200,
+        json={"isSuccess": True, "data": []},
+        request=httpx.Request("GET", "https://test.my.salesforce.com"),
+    )
+    with patch.object(mock_sf_client, "get_access_token", return_value="fake_access_token"):
+        with patch.object(mock_sf_client.http_client, "get", side_effect=[resp_429, resp_200]) as mock_get:
+            res = await mock_sf_client.get_travel_packages(username="agent@travel.com")
+            assert res["isSuccess"] is True
+            assert mock_get.call_count == 2
+

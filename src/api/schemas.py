@@ -39,6 +39,24 @@ class ChatRequest(BaseModel):
         description="Salesforce username for executing CRM queries.",
     )
 
+    trace_id: str | None = Field(
+        default=None,
+        description="Optional distributed trace identifier for end-to-end request correlation.",
+    )
+
+
+class Citation(BaseModel):
+    """
+    Source document citation for grounded RAG answers.
+    Identifies the exact chunk, document title, and page.
+    """
+
+    chunk_id: str = Field(..., description="Unique chunk identifier or deterministic UUID.")
+    source: str = Field(..., description="Source path, document URL, or file name.")
+    title: str | None = Field(default=None, description="Human-readable document title or file name.")
+    page: int | None = Field(default=None, description="Document page number if applicable.")
+    snippet: str | None = Field(default=None, description="Short snippet of retrieved document content.")
+
 
 class ChatResponse(BaseModel):
     """
@@ -59,6 +77,14 @@ class ChatResponse(BaseModel):
             "opportunity_id, new_status, options=['Approve','Reject']."
         ),
     )
+    citations: list[Citation] = Field(
+        default_factory=list,
+        description="Source document citations retrieved and used for the response.",
+    )
+    trace_id: str | None = Field(
+        default=None,
+        description="Distributed trace ID for observability correlation across LangSmith / Langfuse / OpenTelemetry.",
+    )
 
 
 class ResumeRequest(BaseModel):
@@ -68,6 +94,10 @@ class ResumeRequest(BaseModel):
     decision: Literal["Approve", "Reject"] = Field(
         ...,
         description="Human's approval decision. Must be exactly 'Approve' or 'Reject'.",
+    )
+    trace_id: str | None = Field(
+        default=None,
+        description="Optional distributed trace identifier for end-to-end request correlation.",
     )
 
 

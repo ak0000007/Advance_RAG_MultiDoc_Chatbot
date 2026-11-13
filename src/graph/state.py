@@ -39,6 +39,9 @@ class RAGState(TypedDict, total=False):
 
     retrieval_attempts: int
 
+    # Citations retrieved during search_documents
+    citations: list[dict[str, Any]]
+
     # -----------------------------------------------------
     # Generation
     # -----------------------------------------------------

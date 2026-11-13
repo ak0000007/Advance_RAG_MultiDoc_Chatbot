@@ -87,7 +87,7 @@ def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, ch
             embeddings=embeddings,
             collection_name="multidoc_rag",
             url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key,
+            api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
         )
     else:
         qdrant_store = QdrantStore(

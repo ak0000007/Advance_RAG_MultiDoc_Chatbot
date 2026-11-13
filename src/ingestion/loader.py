@@ -1,4 +1,7 @@
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from langchain_community.document_loaders import (
     PyPDFLoader,
@@ -11,51 +14,62 @@ from langchain_community.document_loaders import (
 
 class MultiDocumentLoader:
 
-    def __init__(self, data_directory="data"):
+    def __init__(self, data_directory="data", allowed_directories: list[str | Path] | None = None):
+        self.data_directory = Path(data_directory)
+        self.allowed_directories = [
+            Path(d).resolve() for d in (allowed_directories or [])
+        ]
+        # Always allow the configured data_directory
+        self.allowed_directories.append(self.data_directory.resolve())
 
-        self.data_directory = Path(
-            data_directory
+    def _validate_path(self, file_path: str | Path) -> Path:
+        resolved = Path(file_path).resolve()
+        
+        # Verify resolved path is strictly within one of the allowed directories
+        is_safe = any(
+            allowed_dir == resolved or allowed_dir in resolved.parents
+            for allowed_dir in self.allowed_directories
         )
+        if not is_safe:
+            raise PermissionError(
+                f"Path traversal detected: '{file_path}' resolves outside allowed directories: "
+                f"{[str(d) for d in self.allowed_directories]}"
+            )
+        if not resolved.exists() or not resolved.is_file():
+            raise FileNotFoundError(f"File not found: {resolved}")
+        return resolved
 
     def load_file(self, file_path):
-
-        file_path = Path(file_path)
-
-        extension = file_path.suffix.lower()
+        resolved_path = self._validate_path(file_path)
+        extension = resolved_path.suffix.lower()
 
         if extension == ".pdf":
-
             loader = PyPDFLoader(
-                str(file_path)
+                str(resolved_path)
             )
 
         elif extension == ".docx":
-
             loader = UnstructuredWordDocumentLoader(
-                str(file_path)
+                str(resolved_path)
             )
 
         elif extension == ".csv":
-
             loader = CSVLoader(
-                str(file_path)
+                str(resolved_path)
             )
 
         elif extension in [".xlsx", ".xls"]:
-
             loader = UnstructuredExcelLoader(
-                str(file_path)
+                str(resolved_path)
             )
 
         elif extension == ".txt":
-
             loader = TextLoader(
-                str(file_path),
+                str(resolved_path),
                 encoding="utf-8"
             )
 
         else:
-
             raise ValueError(
                 f"Unsupported file type: {extension}"
             )
@@ -63,11 +77,9 @@ class MultiDocumentLoader:
         documents = loader.load()
 
         for document in documents:
-
             document.metadata["file_name"] = (
-                file_path.name
+                resolved_path.name
             )
-
             document.metadata["file_type"] = (
                 extension
             )
@@ -93,15 +105,10 @@ class MultiDocumentLoader:
                     documents
                 )
 
-                print(
-                    f"Loaded: {file_path}"
-                )
+                logger.info("Loaded: %s", file_path)
 
             except ValueError:
 
-                print(
-                    f"Skipped unsupported file: "
-                    f"{file_path}"
-                )
+                logger.warning("Skipped unsupported file: %s", file_path)
 
         return all_documents

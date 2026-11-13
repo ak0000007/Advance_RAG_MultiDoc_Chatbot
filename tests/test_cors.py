@@ -16,7 +16,8 @@ def test_cors_preflight_options():
     }
     response = client.options("/chat", headers=headers)
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert response.headers.get("access-control-allow-origin") in ("http://localhost:3000", "*")
+    assert response.headers.get("access-control-allow-credentials") is None
     assert "POST" in response.headers.get("access-control-allow-methods", "")
     assert "authorization" in response.headers.get("access-control-allow-headers", "").lower()
 
@@ -28,7 +29,8 @@ def test_cors_headers_on_standard_request():
     client = TestClient(app)
     response = client.get("/health", headers={"Origin": "http://localhost:5173"})
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert response.headers.get("access-control-allow-origin") in ("http://localhost:5173", "*")
+    assert response.headers.get("access-control-allow-credentials") is None
 
 
 def test_cors_origins_pydantic_parsing():

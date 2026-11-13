@@ -3,6 +3,7 @@ Async Salesforce Client for JWT Bearer Flow and Apex API calls.
 Follows SOLID principles: injected with configuration, independent of global state.
 """
 
+import asyncio
 import time
 import json
 import re
@@ -41,10 +42,22 @@ _ALLOWED_SOBJECTS = frozenset({
 
 
 def _parse_api_response(resp: httpx.Response) -> dict[str, Any]:
-    raw = resp.json()
-    if isinstance(raw, str):
-        return json.loads(raw)
-    return raw
+    try:
+        raw = resp.json()
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                return {"isSuccess": False, "message": raw, "data": None}
+        return raw
+    except (json.JSONDecodeError, ValueError):
+        text = getattr(resp, "text", "")
+        status = getattr(resp, "status_code", 500)
+        return {
+            "isSuccess": False,
+            "message": text[:500] if text else f"HTTP {status} non-JSON response",
+            "data": None,
+        }
 
 
 class SalesforceAsyncClient:
@@ -64,6 +77,7 @@ class SalesforceAsyncClient:
         self._private_key = self._load_private_key()
         # {username: (token, expiry_timestamp)}
         self._token_cache: dict[str, tuple[str, float]] = {}
+        self._lock = asyncio.Lock()
         self._client = http_client
         self._owns_client = http_client is None
 
@@ -92,38 +106,65 @@ class SalesforceAsyncClient:
         with open(self.private_key_path, "r") as f:
             return f.read()
 
+    async def _request_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """Execute HTTP request with backoff for rate limits (429) and gateway errors (502, 503, 504)."""
+        max_retries = 3
+        base_delay = 0.5
+        for attempt in range(max_retries):
+            try:
+                fn = getattr(self.http_client, method.lower())
+                resp = await fn(url, **kwargs)
+                if resp.status_code in (429, 502, 503, 504) and attempt < max_retries - 1:
+                    retry_after = resp.headers.get("Retry-After")
+                    delay = float(retry_after) if retry_after and retry_after.isdigit() else base_delay * (2 ** attempt)
+                    await asyncio.sleep(min(delay, 2.0))
+                    continue
+                return resp
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.NetworkError):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(base_delay * (2 ** attempt))
+                    continue
+                raise
+        return await getattr(self.http_client, method.lower())(url, **kwargs)
+
     async def get_access_token(self, username: str) -> str:
         """
         Exchange JWT for a Salesforce Access Token scoped to the user.
         Caches tokens in memory for _TOKEN_TTL seconds to avoid
         redundant network calls during multi-tool sequences.
+        Guarded by asyncio.Lock to prevent concurrent token exchange races.
         """
-        now = time.time()
-        cached = self._token_cache.get(username)
-        if cached and cached[1] > now:
-            return cached[0]
+        async with self._lock:
+            now = time.time()
+            cached = self._token_cache.get(username)
+            if cached and cached[1] > now:
+                return cached[0]
 
-        payload = {
-            "iss": self.client_id,
-            "aud": self.login_url,
-            "sub": username,
-            "exp": int(now) + 300,
-        }
+            payload = {
+                "iss": self.client_id,
+                "aud": self.login_url,
+                "sub": username,
+                "exp": int(now) + 300,
+            }
 
-        encoded_jwt = jwt.encode(payload, self._private_key, algorithm="RS256")
+            encoded_jwt = jwt.encode(payload, self._private_key, algorithm="RS256")
 
-        resp = await self.http_client.post(
-            f"{self.login_url}/services/oauth2/token",
-            data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-                "assertion": encoded_jwt,
-            },
-        )
-        resp.raise_for_status()
-        token = resp.json()["access_token"]
+            resp = await self._request_with_retry(
+                "post",
+                f"{self.login_url}/services/oauth2/token",
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                    "assertion": encoded_jwt,
+                },
+            )
+            resp.raise_for_status()
+            try:
+                token = resp.json()["access_token"]
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                raise RuntimeError(f"Failed to parse Salesforce access token: {resp.text[:200]}") from e
 
-        self._token_cache[username] = (token, now + _TOKEN_TTL)
-        return token
+            self._token_cache[username] = (token, now + _TOKEN_TTL)
+            return token
 
     async def get_opportunities(self, username: str, search: Optional[str] = None) -> dict[str, Any]:
         """
@@ -134,13 +175,14 @@ class SalesforceAsyncClient:
         url = f"{self.domain}/services/apexrest/AgentOpportunities"
         params = {"search": search} if search else {}
 
-        resp = await self.http_client.get(
+        resp = await self._request_with_retry(
+            "get",
             url,
             headers={"Authorization": f"Bearer {token}"},
             params=params,
         )
         resp.raise_for_status()
-        return resp.json()
+        return _parse_api_response(resp)
 
     async def update_opportunity_status(
         self, username: str, opportunity_id: str, new_status: str, idempotency_key: Optional[str] = None
@@ -168,7 +210,8 @@ class SalesforceAsyncClient:
             # Used by downstream systems to deduplicate retry requests.
             headers["Idempotency-Key"] = idempotency_key
 
-        resp = await self.http_client.patch(
+        resp = await self._request_with_retry(
+            "patch",
             url,
             headers=headers,
             json=payload,
@@ -178,7 +221,7 @@ class SalesforceAsyncClient:
         if resp.status_code >= 500:
             resp.raise_for_status()
 
-        return resp.json()
+        return _parse_api_response(resp)
 
     # ── Internal helper ──────────────────────────────────────────────────────
 
@@ -189,14 +232,15 @@ class SalesforceAsyncClient:
         clean_name = re.sub(r'[\x00-\x1f\x7f]', '', name).strip()[:255]
         safe_name = clean_name.replace('\\', '\\\\').replace("'", "\\'")
         url = f"{self.domain}/services/data/v60.0/query"
-        resp = await self.http_client.get(
+        resp = await self._request_with_retry(
+            "get",
             url,
             headers={"Authorization": f"Bearer {token}"},
             params={"q": f"SELECT Id FROM {sobject} WHERE Name = '{safe_name}' LIMIT 1"},
         )
         if resp.status_code != 200:
             return None
-        data = resp.json()
+        data = _parse_api_response(resp)
         if isinstance(data, dict):
             records = data.get("records", [])
             return records[0]["Id"] if records else None
@@ -217,7 +261,8 @@ class SalesforceAsyncClient:
                 booking_id = resolved
             params["bookingId"] = booking_id
 
-        resp = await self.http_client.get(
+        resp = await self._request_with_retry(
+            "get",
             f"{self.domain}/services/apexrest/Agent/Booking/Get/",
             headers={"Authorization": f"Bearer {token}"},
             params=params,
@@ -239,7 +284,8 @@ class SalesforceAsyncClient:
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
 
-        resp = await self.http_client.patch(
+        resp = await self._request_with_retry(
+            "patch",
             f"{self.domain}/services/apexrest/Agent/Booking/Update/",
             headers=headers,
             json=payload,
@@ -257,7 +303,8 @@ class SalesforceAsyncClient:
         token = await self.get_access_token(username)
         params = {"packageId": package_id} if package_id else {}
 
-        resp = await self.http_client.get(
+        resp = await self._request_with_retry(
+            "get",
             f"{self.domain}/services/apexrest/Agent/TravelPackage/Get/",
             headers={"Authorization": f"Bearer {token}"},
             params=params,
@@ -279,7 +326,8 @@ class SalesforceAsyncClient:
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
 
-        resp = await self.http_client.patch(
+        resp = await self._request_with_retry(
+            "patch",
             f"{self.domain}/services/apexrest/Agent/TravelPackage/Update/",
             headers=headers,
             json=payload,
@@ -311,7 +359,8 @@ class SalesforceAsyncClient:
                 bid = resolved
             params["bookingId"] = bid
 
-        resp = await self.http_client.get(
+        resp = await self._request_with_retry(
+            "get",
             f"{self.domain}/services/apexrest/Agent/Payment/Get/",
             headers={"Authorization": f"Bearer {token}"},
             params=params,
@@ -333,7 +382,8 @@ class SalesforceAsyncClient:
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
 
-        resp = await self.http_client.patch(
+        resp = await self._request_with_retry(
+            "patch",
             f"{self.domain}/services/apexrest/Agent/Payment/Update/",
             headers=headers,
             json=payload,

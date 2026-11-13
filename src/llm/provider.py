@@ -54,6 +54,12 @@ def list_providers() -> list[str]:
 # =========================================================
 
 
+def _resolve_key(key: Any) -> str | None:
+    if hasattr(key, "get_secret_value"):
+        return key.get_secret_value()
+    return key
+
+
 def _create_gemini(
     *,
     model: str,
@@ -85,7 +91,7 @@ def _create_gemini(
         "max_retries": 1,
     }
 
-    google_api_key = (
+    google_api_key = _resolve_key(
         api_key
         or settings.google_api_key
     )
@@ -134,7 +140,7 @@ def _create_deepseek(
             "pip install -U langchain-openai"
         ) from exc
 
-    deepseek_api_key = (
+    deepseek_api_key = _resolve_key(
         api_key
         or settings.deepseek_api_key
     )
@@ -182,7 +188,7 @@ def _create_openai(
             "'langchain-openai'."
         ) from exc
 
-    openai_api_key = (
+    openai_api_key = _resolve_key(
         api_key
         or settings.openai_api_key
     )

@@ -28,6 +28,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from src.graph.state import RAGState
+from src.retrieval.citations import extract_citations_from_text
 
 
 SYSTEM_PROMPT = """You are an intelligent travel enterprise assistant.
@@ -45,7 +46,8 @@ AVAILABLE TOOLS:
 9. update_payment                — Update a Payment record (requires approval).
 
 TOOL USAGE GUIDELINES:
-1. Document Search: Use `search_documents` for company policies, internal FAQs, or knowledge base questions.
+1. Document Search: Use `search_documents` ONLY for company policies, internal FAQs, employee guidelines, or general travel knowledge base questions.
+   CRITICAL: NEVER call `search_documents` for Salesforce CRM data queries or CRM record updates (Opportunities, Deals, Bookings, Travel Packages, Payments). For any Salesforce/CRM query or action, ALWAYS and ONLY use the dedicated Salesforce tools (`search_salesforce_opportunities`, `update_salesforce_opportunity_status`, `get_booking`, `update_booking`, `get_travel_packages`, `update_travel_package`, `get_payments`, `update_payment`).
 2. Salesforce Opportunities: Use `search_salesforce_opportunities` for deals/pipeline queries.
 3. Bookings: When the user asks about bookings or asks to modify a booking by name, CALL `get_booking` immediately (with NO arguments to fetch all user bookings, or with a specific booking number if provided).
 4. Travel Packages: Use `get_travel_packages` with no args to list all active packages. Pass a package ID to get details for one.
@@ -62,6 +64,7 @@ BEHAVIORAL GUIDELINES:
 2. Base answers on tool results only. If tools return nothing relevant, say so — do not hallucinate.
 3. When showing booking/payment/package data, summarize clearly and concisely.
 4. When clarifying ambiguity, always ask the user a direct, explicit question specifying which item to act on.
+5. Citation Discipline: When answering questions using information from search_documents, cite source title and page number inline where available (e.g. '[Doc: <Title>, Page <N>]' or '[<Title>]').
 """
 
 
@@ -195,7 +198,23 @@ def build_rag_graph(
             **(config or {}),
             "configurable": merged_configurable,
         }
-        return await _base_tool_node.ainvoke(state, config=merged_config)
+        tool_result = await _base_tool_node.ainvoke(state, config=merged_config)
+
+        # Capture and merge citation metadata from document search results
+        messages = tool_result.get("messages", []) if isinstance(tool_result, dict) else []
+        citations = []
+        for msg in messages:
+            content = getattr(msg, "content", "")
+            if isinstance(content, str) and "<document" in content:
+                citations.extend(extract_citations_from_text(content))
+
+        if citations and isinstance(tool_result, dict):
+            existing = state.get("citations") or []
+            seen_ids = {c.get("chunk_id") for c in existing if isinstance(c, dict)}
+            new_cites = [c for c in citations if c.get("chunk_id") not in seen_ids]
+            tool_result["citations"] = existing + new_cites
+
+        return tool_result
 
     graph_builder.add_node("tools", tool_node)
 

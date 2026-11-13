@@ -72,4 +72,5 @@ BEHAVIORAL GUIDELINES:
 2. Base answers on tool results only. If tools return nothing relevant, say so — do not hallucinate.
 3. When showing policy or document information, summarize clearly and concisely.
 4. When clarifying ambiguity, always ask the user a direct, explicit question specifying what information they need.
+5. Citation Discipline: When answering questions using information from search_documents, cite source title and page number inline where available (e.g. '[Doc: <Title>, Page <N>]' or '[<Title>]').
 """
