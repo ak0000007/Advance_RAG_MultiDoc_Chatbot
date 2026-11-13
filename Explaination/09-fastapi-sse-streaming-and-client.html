@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Module 09: Enterprise API, SSE Token Streaming & Client Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });</script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #6366f1;
+      --accent: #06b6d4;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans); line-height: 1.6; display: flex; }
+    nav.sidebar { width: 300px; height: 100vh; position: sticky; top: 0; background: #090d16; border-right: 1px solid var(--card-border); padding: 24px 16px; overflow-y: auto; font-size: 0.88rem; flex-shrink: 0; }
+    nav.sidebar h2 { font-size: 1rem; color: var(--accent); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    nav.sidebar a { display: block; color: var(--text-muted); text-decoration: none; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
+    nav.sidebar a:hover, nav.sidebar a.active { color: var(--text); background: rgba(99, 102, 241, 0.15); border-left: 3px solid var(--primary); }
+    .hub-link { display: inline-block; margin-bottom: 18px; color: var(--primary); font-weight: 600; text-decoration: none; }
+    main.content { flex: 1; padding: 40px 60px; max-width: 1200px; overflow-x: hidden; }
+    h1 { font-size: 2.2rem; color: #fff; margin-bottom: 8px; }
+    .subtitle { color: var(--accent); font-size: 1.1rem; margin-bottom: 30px; }
+    h2 { font-size: 1.5rem; margin: 36px 0 16px 0; color: #e0e7ff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px; }
+    h3 { font-size: 1.2rem; margin: 20px 0 10px 0; color: #a5b4fc; }
+    p { margin-bottom: 14px; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 24px; margin-bottom: 24px; }
+    .alert { padding: 16px 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid; }
+    .alert-info { background: rgba(6, 182, 212, 0.1); border-color: var(--accent); color: #a5f3fc; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--card-border); padding: 10px 14px; text-align: left; }
+    th { background: #1e293b; color: #cbd5e1; font-weight: 600; }
+    tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+    pre { background: var(--code-bg); border: 1px solid #1e293b; border-radius: 8px; padding: 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 16px; }
+    code { font-family: var(--font-mono); color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
+    .mermaid { background: #0f172a; padding: 20px; border-radius: 8px; border: 1px solid var(--card-border); margin: 20px 0; }
+    ul, ol { margin-left: 24px; margin-bottom: 16px; }
+    li { margin-bottom: 6px; }
+    .interview-q { background: #1e1b4b; border-left: 4px solid var(--primary); padding: 16px; margin: 16px 0; border-radius: 0 8px 8px 0; }
+    .interview-q strong { color: #c7d2fe; display: block; margin-bottom: 6px; font-size: 1.05rem; }
+  </style>
+</head>
+<body>
+
+  <nav class="sidebar">
+    <a href="index.html" class="hub-link">← Master Index</a>
+    <h2>Module 09 Navigation</h2>
+    <a href="#sec-fastapi">1. Enterprise FastAPI Architecture</a>
+    <a href="#sec-sse">2. Server-Sent Events (SSE) Streaming</a>
+    <a href="#sec-pooling">3. Persistent HTTP Connection Pooling</a>
+    <a href="#sec-citations">4. Dynamic Citation Extraction</a>
+    <a href="#sec-code">5. Code Implementation Deep-Dive</a>
+    <a href="#sec-interview">6. Senior Interview Defense</a>
+  </nav>
+
+  <main class="content">
+    <h1>Module 09: Enterprise API, SSE Token Streaming & Client Architecture</h1>
+    <p class="subtitle">FastAPI Async Lifespans, Server-Sent Events (SSE) Event Multiplexing & Resilient HTTP Clients</p>
+
+    <section id="sec-fastapi">
+      <h2>1. Enterprise FastAPI Architecture</h2>
+      <div class="card">
+        <p>
+          The API gateway (<code>src/api/app.py</code> and <code>src/api/routes.py</code>) provides the interface connecting client web applications, external chatbots, and corporate webhooks to the LangGraph core.
+        </p>
+        <ul>
+          <li><strong>Lifespan Management:</strong> Database pools (<code>psycopg_pool.AsyncConnectionPool</code>) and vector clients are initialized during startup and cleanly drained on shutdown, avoiding connection leaks.</li>
+          <li><strong>CORS Hardening:</strong> Configurable origin parsing protects internal enterprise endpoints from cross-site scripting vulnerabilities.</li>
+          <li><strong>Dependency Injection (DIP):</strong> <code>dependencies.py</code> builds the heavy graph, retriever, and LLM instances once as cached singletons, keeping routes focused strictly on HTTP protocol translation.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="sec-sse">
+      <h2>2. Server-Sent Events (SSE) Streaming Protocol</h2>
+      <div class="card">
+        <p>
+          Waiting 4–6 seconds for a multi-step agent to finish retrieval, grading, and final generation produces unacceptable perceived latency. <code>POST /chat/stream</code> streams execution events in real time using Server-Sent Events (SSE).
+        </p>
+        <div class="mermaid">
+sequenceDiagram
+    participant UI as Web Client
+    participant API as FastAPI /chat/stream
+    participant Graph as LangGraph Engine
+
+    UI->>API: POST /chat/stream (question: "...")
+    API->>Graph: graph.astream_events(v2)
+    Graph-->>API: on_tool_start (search_documents)
+    API-->>UI: data: {"event": "status", "data": "Searching knowledge base..."}
+
+    Graph-->>API: on_chat_model_stream (token: "Corporate")
+    API-->>UI: data: {"event": "token", "data": "Corporate "}
+    Graph-->>API: on_chat_model_stream (token: "travel")
+    API-->>UI: data: {"event": "token", "data": "travel "}
+
+    Graph-->>API: on_chain_end
+    API-->>UI: data: {"event": "done", "citations": [...]}
+        </div>
+        <table>
+          <thead>
+            <tr><th>Event Type</th><th>Payload Purpose</th><th>UI Behavior</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>event: status</code></td><td>Real-time tool progress (e.g., "Consulting CRM records...")</td><td>Renders animated status indicator.</td></tr>
+            <tr><td><code>event: token</code></td><td>Individual generated tokens as they leave the LLM</td><td>Appends words incrementally to the chat bubble.</td></tr>
+            <tr><td><code>event: interrupt</code></td><td>Approval proposal payload (record ID, proposed changes)</td><td>Opens interactive confirmation modal.</td></tr>
+            <tr><td><code>event: done</code></td><td>Final answer, metadata, trace ID, and citations</td><td>Finalizes message bubble and attaches source citation chips.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sec-pooling">
+      <h2>3. Persistent HTTP Connection Pooling (<code>SalesforceAsyncClient</code>)</h2>
+      <div class="card">
+        <h3>The TLS Handshake Bottleneck</h3>
+        <p>
+          Creating a new <code>httpx.AsyncClient()</code> for every outbound CRM request wastes 80–120ms per call re-negotiating TCP handshakes and TLS certificates with Salesforce servers.
+        </p>
+        <h3>Connection Pooling & Rate-Limit Backoff</h3>
+        <p>
+          <code>SalesforceAsyncClient</code> maintains a persistent <code>httpx.AsyncClient</code> singleton equipped with:
+        </p>
+        <ul>
+          <li><strong>Connection Limits:</strong> <code>httpx.Limits(max_keepalive_connections=20, max_connections=50)</code>.</li>
+          <li><strong>Automatic Session Recovery:</strong> If the client is accidentally closed or encounters network partition, it self-heals by instantiating a fresh session.</li>
+          <li><strong>Exponential Backoff on 429:</strong> Retries rate-limited Apex calls using jittered exponential backoff (<code>2^attempt + jitter</code>).</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="sec-citations">
+      <h2>4. Dynamic Citation Extraction (<code>src/retrieval/citations.py</code>)</h2>
+      <div class="card">
+        <p>
+          Retrieved documents format citations into XML attributes: <code>&lt;document source="policy.txt" title="Travel Policy" chunk_id="uuid"&gt;</code>.
+        </p>
+        <p>
+          Before responses leave the API, regex extractors parse these attributes, producing structured Pydantic <code>Citation</code> objects:
+        </p>
+        <pre><code>class Citation(BaseModel):
+    source: str
+    title: str
+    chunk_id: Optional[str] = None
+    page: Optional[int] = None</code></pre>
+        <p>
+          The frontend UI renders these as interactive chips at the bottom of the response, linking users directly to the authoritative corporate source files.
+        </p>
+      </div>
+    </section>
+
+    <section id="sec-code">
+      <h2>5. Code Implementation Deep-Dive (<code>src/api/routes.py</code>)</h2>
+      <div class="card">
+        <pre><code>async def _stream_graph_events(graph, inputs, config: dict, thread_id: str):
+    """Multiplex LangGraph events into Server-Sent Events (SSE)."""
+    async for event in graph.astream_events(inputs, config, version="v2"):
+        kind = event["event"]
+
+        # Stream status on tool invocations
+        if kind == "on_tool_start":
+            tool_name = event.get("name", "tool")
+            yield f"event: status\ndata: {json.dumps({'step': f'Running {tool_name}'})}\n\n"
+
+        # Stream LLM tokens in real time
+        elif kind == "on_chat_model_stream":
+            chunk = event.get("data", {}).get("chunk")
+            if chunk and hasattr(chunk, "content") and chunk.content:
+                yield f"event: token\ndata: {json.dumps({'delta': chunk.content})}\n\n"
+
+    # Check for approval interrupt or completion
+    snapshot = await graph.aget_state(config)
+    if snapshot.next:
+        # Paused at approval interrupt
+        interrupt_val = snapshot.tasks[0].interrupts[0].value
+        yield f"event: interrupt\ndata: {json.dumps({'approval_request': interrupt_val})}\n\n"
+    else:
+        # Completed normally
+        answer = snapshot.values.get("answer", "")
+        citations = snapshot.values.get("citations", [])
+        yield f"event: done\ndata: {json.dumps({'answer': answer, 'citations': citations})}\n\n"</code></pre>
+      </div>
+    </section>
+
+    <section id="sec-interview">
+      <h2>6. Senior Engineering Interview Defense</h2>
+      <div class="card">
+        <div class="interview-q">
+          <strong>Q1: Why choose Server-Sent Events (SSE) over WebSockets for conversational AI streaming?</strong>
+          <p>
+            <em>Answer:</em> SSE operates over standard HTTP/1.1 or HTTP/2, requiring no custom handshake, protocol upgrading, or stateful proxy configurations. It is lightweight, unidirectional (server-to-client), and natively supports browser auto-reconnect via <code>EventSource</code>. WebSockets add unnecessary full-duplex protocol complexity for request-response chat patterns where client-to-server traffic is infrequent compared to server-to-client token streams.
+          </p>
+        </div>
+
+        <div class="interview-q">
+          <strong>Q2: How do you handle HTTP 429 Too Many Requests errors when integrating third-party enterprise APIs like Salesforce?</strong>
+          <p>
+            <em>Answer:</em> We implement an exponential backoff strategy with full jitter. If Salesforce returns a 429 response, the client inspects the <code>Retry-After</code> header if present; otherwise, it delays the retry by <code>min(max_backoff, base * 2^attempt) + random_jitter</code>. Adding random jitter prevents the "thundering herd" problem where multiple concurrent workers retry at the exact same millisecond.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

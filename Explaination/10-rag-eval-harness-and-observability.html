@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Module 10: RAG Evaluation Benchmark Harness & Production Observability</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });</script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #6366f1;
+      --accent: #06b6d4;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans); line-height: 1.6; display: flex; }
+    nav.sidebar { width: 300px; height: 100vh; position: sticky; top: 0; background: #090d16; border-right: 1px solid var(--card-border); padding: 24px 16px; overflow-y: auto; font-size: 0.88rem; flex-shrink: 0; }
+    nav.sidebar h2 { font-size: 1rem; color: var(--accent); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    nav.sidebar a { display: block; color: var(--text-muted); text-decoration: none; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
+    nav.sidebar a:hover, nav.sidebar a.active { color: var(--text); background: rgba(99, 102, 241, 0.15); border-left: 3px solid var(--primary); }
+    .hub-link { display: inline-block; margin-bottom: 18px; color: var(--primary); font-weight: 600; text-decoration: none; }
+    main.content { flex: 1; padding: 40px 60px; max-width: 1200px; overflow-x: hidden; }
+    h1 { font-size: 2.2rem; color: #fff; margin-bottom: 8px; }
+    .subtitle { color: var(--accent); font-size: 1.1rem; margin-bottom: 30px; }
+    h2 { font-size: 1.5rem; margin: 36px 0 16px 0; color: #e0e7ff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px; }
+    h3 { font-size: 1.2rem; margin: 20px 0 10px 0; color: #a5b4fc; }
+    p { margin-bottom: 14px; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 24px; margin-bottom: 24px; }
+    .alert { padding: 16px 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid; }
+    .alert-info { background: rgba(6, 182, 212, 0.1); border-color: var(--accent); color: #a5f3fc; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--card-border); padding: 10px 14px; text-align: left; }
+    th { background: #1e293b; color: #cbd5e1; font-weight: 600; }
+    tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+    pre { background: var(--code-bg); border: 1px solid #1e293b; border-radius: 8px; padding: 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 16px; }
+    code { font-family: var(--font-mono); color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
+    .mermaid { background: #0f172a; padding: 20px; border-radius: 8px; border: 1px solid var(--card-border); margin: 20px 0; }
+    ul, ol { margin-left: 24px; margin-bottom: 16px; }
+    li { margin-bottom: 6px; }
+    .interview-q { background: #1e1b4b; border-left: 4px solid var(--primary); padding: 16px; margin: 16px 0; border-radius: 0 8px 8px 0; }
+    .interview-q strong { color: #c7d2fe; display: block; margin-bottom: 6px; font-size: 1.05rem; }
+  </style>
+</head>
+<body>
+
+  <nav class="sidebar">
+    <a href="index.html" class="hub-link">← Master Index</a>
+    <h2>Module 10 Navigation</h2>
+    <a href="#sec-why-eval">1. Why Evaluation is Mandatory</a>
+    <a href="#sec-metrics">2. Core Evaluation Metrics</a>
+    <a href="#sec-runner">3. Benchmark Runner & 4-Way Comparison</a>
+    <a href="#sec-judge">4. LLM Judge & Faithfulness</a>
+    <a href="#sec-observability">5. Production Observability Stack</a>
+    <a href="#sec-code">6. Code Implementation Deep-Dive</a>
+    <a href="#sec-interview">7. Senior Interview Defense</a>
+  </nav>
+
+  <main class="content">
+    <h1>Module 10: RAG Evaluation Benchmark Harness & Production Observability</h1>
+    <p class="subtitle">Statistical IR Metrics, 4-Pipeline Benchmarking, LLM Judges & Multi-Tracer Distributed Telemetry</p>
+
+    <section id="sec-why-eval">
+      <h2>1. Why Evaluation is Mandatory (Moving Beyond "Vibe Checks")</h2>
+      <div class="card">
+        <p>
+          Most RAG applications are evaluated via subjective "vibe checks" — developers manually ask three questions and assume the system works. In production:
+        </p>
+        <ul>
+          <li>Changing chunk size from 1000 to 800 may silently break retrieval for complex multi-paragraph policies.</li>
+          <li>Swapping an embedding model may boost Hit@1 on definitions while destroying recall on tables.</li>
+          <li>Prompt changes can cause the LLM to hallucinate answers instead of abstaining when questions are unanswerable.</li>
+        </ul>
+        <div class="alert alert-info">
+          <strong>Objective Evaluation:</strong> We built an automated evaluation harness in <code>evals/rag/</code> with statistical IR metrics and an LLM judge to benchmark retrieval pipelines deterministically in CI/CD.
+        </div>
+      </div>
+    </section>
+
+    <section id="sec-metrics">
+      <h2>2. Core Statistical Retrieval Metrics (<code>evals/rag/metrics.py</code>)</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>Metric</th><th>Definition</th><th>What It Measures</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Hit@k</strong></td>
+              <td><code>1</code> if at least one relevant document appears in top-k results; <code>0</code> otherwise.</td>
+              <td>Was the user's answer present in the retrieved set at all?</td>
+            </tr>
+            <tr>
+              <td><strong>Recall@k</strong></td>
+              <td><code>|Retrieved Relevant Docs| / |Total Ground Truth Relevant Docs|</code>.</td>
+              <td>Did the system find <em>all</em> pieces of evidence needed for multi-doc synthesis?</td>
+            </tr>
+            <tr>
+              <td><strong>MRR (Mean Reciprocal Rank)</strong></td>
+              <td><code>1 / rank_first_relevant</code> averaged across all benchmark queries.</td>
+              <td>How close to the very top (rank 1) is the first relevant piece of evidence?</td>
+            </tr>
+            <tr>
+              <td><strong>nDCG@k</strong></td>
+              <td>Normalized Discounted Cumulative Gain: <code>DCG / IDCG</code>.</td>
+              <td>Are highly relevant documents ranked ahead of moderately relevant ones?</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3>Zero Chunk ID Churn</h3>
+        <p>
+          A common flaw in RAG benchmarks is hardcoding chunk IDs in the evaluation dataset. Whenever an engineer changes chunk overlap, all chunk IDs change, breaking the entire test set.
+        </p>
+        <p>
+          Our evaluation harness matches against <strong>normalized source file names</strong> and <strong>substring contains checks</strong>. You can re-chunk, re-index, or change document boundaries without breaking your golden dataset!
+        </p>
+      </div>
+    </section>
+
+    <section id="sec-runner">
+      <h2>3. Benchmark Runner & 4-Way Pipeline Comparison</h2>
+      <div class="card">
+        <p>
+          <code>evals/rag/runner.py</code> runs a 35-case benchmark across 4 distinct retrieval configurations:
+        </p>
+        <table>
+          <thead>
+            <tr><th>Retrieval Pipeline</th><th>Hit@1</th><th>Hit@3</th><th>Hit@5</th><th>MRR</th><th>nDCG@5</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Dense Only (Qdrant)</strong></td><td>0.743</td><td>0.800</td><td>0.800</td><td>0.771</td><td>0.772</td></tr>
+            <tr><td><strong>BM25 Only (Keyword)</strong></td><td><strong>0.800</strong></td><td><strong>0.800</strong></td><td><strong>0.800</strong></td><td><strong>0.800</strong></td><td><strong>0.798</strong></td></tr>
+            <tr><td><strong>Hybrid (RRF Fusion)</strong></td><td>0.743</td><td>0.800</td><td>0.800</td><td>0.771</td><td>0.772</td></tr>
+            <tr><td><strong>Hybrid + Cross-Encoder Rerank</strong></td><td>0.743</td><td>0.800</td><td>0.800</td><td>0.771</td><td>0.772</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sec-judge">
+      <h2>4. LLM Judge & Faithfulness Evaluation</h2>
+      <div class="card">
+        <p>
+          Passing the <code>--judge</code> flag activates an LLM evaluation stage that assesses:
+        </p>
+        <ol>
+          <li><strong>Faithfulness:</strong> Does the generated answer contain claims not supported by the retrieved context? (Score 0.0 to 1.0).</li>
+          <li><strong>Abstention on Unanswerable Queries:</strong> For questions where ground truth is missing (e.g. "What is the SpaceX Mars flight code?"), did the model correctly state that the policy does not contain this information rather than hallucinating?</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="sec-observability">
+      <h2>5. Production Observability & Distributed Tracing</h2>
+      <div class="card">
+        <p>
+          The system implements enterprise observability across <code>src/telemetry.py</code> and <code>src/telemetry_metrics.py</code>:
+        </p>
+        <div class="mermaid">
+flowchart LR
+    Request["Incoming Request"] --> TraceID["UUIDv4 trace_id"]
+    TraceID --> CB["ObservabilityCallbackHandler"]
+    CB --> LangSmith["LangSmith Cloud"]
+    CB --> Langfuse["Langfuse Dashboard"]
+    CB --> OTel["OpenTelemetry Collector"]
+    CB --> Prom["Prometheus /metrics Endpoint"]
+        </div>
+        <ul>
+          <li><strong>Trace ID Propagation:</strong> Every request generates a <code>trace_id</code> returned in response headers and SSE events, correlating frontend actions with backend logs.</li>
+          <li><strong>Latency Histograms:</strong> Prometheus histograms record node execution duration and individual tool execution times.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="sec-code">
+      <h2>6. Code Implementation Deep-Dive (<code>evals/rag/metrics.py</code>)</h2>
+      <div class="card">
+        <pre><code>def is_chunk_relevant(doc: Document, target_sources: Sequence[str], contains_phrases: Sequence[str]) -> bool:
+    """Evaluate relevance without hardcoding volatile chunk IDs."""
+    doc_source = normalize_filename(doc.metadata.get("source", "") or doc.metadata.get("file_name", ""))
+    target_normalized = {normalize_filename(s) for s in target_sources}
+
+    if target_normalized and doc_source not in target_normalized:
+        return False
+
+    content_lower = doc.page_content.lower()
+    for phrase in contains_phrases:
+        if phrase.lower() not in content_lower:
+            return False
+    return True
+
+def compute_retrieval_metrics(retrieved_docs: Sequence[Document], target_sources: Sequence[str], contains: Sequence[str], k_values=(1, 3, 5)) -> dict:
+    hits = [is_chunk_relevant(d, target_sources, contains) for d in retrieved_docs]
+    
+    # Calculate MRR
+    first_hit_rank = next((idx for idx, hit in enumerate(hits, start=1) if hit), None)
+    mrr = (1.0 / first_hit_rank) if first_hit_rank is not None else 0.0
+
+    metrics = {"mrr": mrr}
+    for k in k_values:
+        sub_hits = hits[:k]
+        metrics[f"hit@{k}"] = 1.0 if any(sub_hits) else 0.0
+        metrics[f"recall@{k}"] = sum(sub_hits) / len(target_sources) if target_sources else 1.0
+        metrics[f"ndcg@{k}"] = compute_ndcg(sub_hits, k)
+    return metrics</code></pre>
+      </div>
+    </section>
+
+    <section id="sec-interview">
+      <h2>7. Senior Engineering Interview Defense</h2>
+      <div class="card">
+        <div class="interview-q">
+          <strong>Q1: Why should an enterprise RAG evaluation avoid binding to static chunk IDs?</strong>
+          <p>
+            <em>Answer:</em> Chunk IDs are volatile artifacts of the preprocessing pipeline. If an engineer tunes the chunk size, updates the markdown parser, or adds a single sentence to a policy document, every single downstream chunk ID changes. If the evaluation dataset contains hardcoded chunk IDs, the entire benchmark becomes invalid overnight. By matching on normalized source files and semantic phrase presence, the evaluation dataset remains a durable, long-term gold standard.
+          </p>
+        </div>
+
+        <div class="interview-q">
+          <strong>Q2: How do you measure hallucination in an automated CI/CD pipeline?</strong>
+          <p>
+            <em>Answer:</em> We use a two-pronged approach. First, we compute retrieval precision (Hit@k, MRR) to ensure that ground-truth context is actually fed to the generator. Second, we run an LLM judge with structured output that decomposes the generated answer into atomic claims, checking whether each claim is supported by the retrieved context chunks (Faithfulness score). For unanswerable adversarial queries, the judge verifies that the model explicitly abstains.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

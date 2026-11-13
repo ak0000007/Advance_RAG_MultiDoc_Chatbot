@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Module 05: Self-Correcting RAG: Relevance Grading & Query Rewriting</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });</script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #6366f1;
+      --accent: #06b6d4;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans); line-height: 1.6; display: flex; }
+    nav.sidebar { width: 300px; height: 100vh; position: sticky; top: 0; background: #090d16; border-right: 1px solid var(--card-border); padding: 24px 16px; overflow-y: auto; font-size: 0.88rem; flex-shrink: 0; }
+    nav.sidebar h2 { font-size: 1rem; color: var(--accent); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    nav.sidebar a { display: block; color: var(--text-muted); text-decoration: none; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
+    nav.sidebar a:hover, nav.sidebar a.active { color: var(--text); background: rgba(99, 102, 241, 0.15); border-left: 3px solid var(--primary); }
+    .hub-link { display: inline-block; margin-bottom: 18px; color: var(--primary); font-weight: 600; text-decoration: none; }
+    main.content { flex: 1; padding: 40px 60px; max-width: 1200px; overflow-x: hidden; }
+    h1 { font-size: 2.2rem; color: #fff; margin-bottom: 8px; }
+    .subtitle { color: var(--accent); font-size: 1.1rem; margin-bottom: 30px; }
+    h2 { font-size: 1.5rem; margin: 36px 0 16px 0; color: #e0e7ff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px; }
+    h3 { font-size: 1.2rem; margin: 20px 0 10px 0; color: #a5b4fc; }
+    p { margin-bottom: 14px; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 24px; margin-bottom: 24px; }
+    .alert { padding: 16px 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid; }
+    .alert-info { background: rgba(6, 182, 212, 0.1); border-color: var(--accent); color: #a5f3fc; }
+    .alert-danger { background: rgba(239, 68, 68, 0.1); border-color: var(--danger); color: #fca5a5; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--card-border); padding: 10px 14px; text-align: left; }
+    th { background: #1e293b; color: #cbd5e1; font-weight: 600; }
+    tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+    pre { background: var(--code-bg); border: 1px solid #1e293b; border-radius: 8px; padding: 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 16px; }
+    code { font-family: var(--font-mono); color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
+    .mermaid { background: #0f172a; padding: 20px; border-radius: 8px; border: 1px solid var(--card-border); margin: 20px 0; }
+    ul, ol { margin-left: 24px; margin-bottom: 16px; }
+    li { margin-bottom: 6px; }
+    .interview-q { background: #1e1b4b; border-left: 4px solid var(--primary); padding: 16px; margin: 16px 0; border-radius: 0 8px 8px 0; }
+    .interview-q strong { color: #c7d2fe; display: block; margin-bottom: 6px; font-size: 1.05rem; }
+  </style>
+</head>
+<body>
+
+  <nav class="sidebar">
+    <a href="index.html" class="hub-link">← Master Index</a>
+    <h2>Module 05 Navigation</h2>
+    <a href="#sec-why-crag">1. The Need for Self-Correction</a>
+    <a href="#sec-crag-loop">2. The Corrective RAG (CRAG) Loop</a>
+    <a href="#sec-grading">3. Pydantic Structured Output Grading</a>
+    <a href="#sec-rewriting">4. Contextual Query Rewriting</a>
+    <a href="#sec-failsafe">5. The Grader Fail-Safe Architecture</a>
+    <a href="#sec-code">6. Code Implementation Deep-Dive</a>
+    <a href="#sec-interview">7. Senior Interview Defense</a>
+  </nav>
+
+  <main class="content">
+    <h1>Module 05: Self-Correcting RAG: Relevance Grading & Query Rewriting</h1>
+    <p class="subtitle">Autonomous Feedback Loops, Pydantic Document Grading & Fail-Safe Diagnostic Fallbacks</p>
+
+    <section id="sec-why-crag">
+      <h2>1. The Need for Self-Correction (Why Naive RAG Fails)</h2>
+      <div class="card">
+        <p>
+          In traditional Naive RAG, retrieval is a <strong>one-shot blind pipeline</strong>:
+        </p>
+        <pre><code>User Query → Vector Search → Top-K Chunks → LLM Generation → Answer</code></pre>
+        <p>
+          If the user's query is vaguely phrased (e.g., "What happens if I don't show up?"), the vector search may retrieve general travel tips rather than the penalty clause for flight no-shows. In naive RAG, the LLM hallucinates an answer or provides generic advice because it has no mechanism to question whether its retrieved context is actually relevant.
+        </p>
+        <div class="alert alert-info">
+          <strong>Self-Correcting RAG (CRAG):</strong> Introduces an active reflection loop where an evaluator LLM grades retrieved chunks against the question. If irrelevant, an LLM query rewriter diagnoses why the retrieval failed and reformulates the search query.
+        </div>
+      </div>
+    </section>
+
+    <section id="sec-crag-loop">
+      <h2>2. The Corrective RAG (CRAG) Loop</h2>
+      <div class="card">
+        <div class="mermaid">
+flowchart TD
+    Query["User Query"] --> Retrieve["Hybrid Retrieval + Cross-Encoder Rerank"]
+    Retrieve --> CheckDocs{"Documents Found?"}
+    CheckDocs -->|No| NoDocs["Return 'No documents found'"]
+    CheckDocs -->|Yes| Grader{"LLM Relevance Grader"}
+
+    Grader -->|"Exception / RateLimit"| FailSafe["Fail-Safe Tagging:\n'[UNVERIFIED RETRIEVAL]'"]
+    FailSafe --> ReturnContext["Return Context to Agent"]
+
+    Grader -->|"Relevant == True"| ReturnContext
+    Grader -->|"Relevant == False\nAttempt < Max (2)"| Rewriter["Query Rewriter\n(Diagnosis + Contextualization)"]
+    Rewriter -->|"Rewritten Query"| Retrieve
+
+    Grader -->|"Relevant == False\nAttempt == Max (2)"| FallbackMsg["Return 'Relevance unconfirmed' + Context"]
+        </div>
+      </div>
+    </section>
+
+    <section id="sec-grading">
+      <h2>3. Pydantic Structured Output Grading</h2>
+      <div class="card">
+        <p>
+          Unstructured LLM evaluations ("Yes", "It seems relevant") are prone to parsing failures. We enforce schema validation using Pydantic:
+        </p>
+        <pre><code>class RetrievalGrade(BaseModel):
+    """Binary score and rationale for relevance check on retrieved documents."""
+    relevant: bool = Field(
+        ...,
+        description="True if documents contain information answering the question, False otherwise."
+    )
+    reason: str = Field(
+        ...,
+        description="Detailed explanation justifying the relevance decision."
+    )</code></pre>
+        <p>
+          The prompt uses <code>PydanticOutputParser</code> with strict formatting instructions, guaranteeing deterministic boolean outputs.
+        </p>
+      </div>
+    </section>
+
+    <section id="sec-rewriting">
+      <h2>4. Contextual Query Rewriting</h2>
+      <div class="card">
+        <p>
+          When the grader determines that retrieved chunks are irrelevant, passing the same query back to the retriever would produce the exact same failure.
+        </p>
+        <p>
+          The <code>build_corrective_rewriter</code> takes two inputs:
+        </p>
+        <ol>
+          <li><code>question</code>: The user's original inquiry.</li>
+          <li><code>reason</code>: The grader's explanation of why previous chunks failed (e.g., "Retrieved chunks discussed cancellation deadlines, but omitted monetary refund percentages").</li>
+        </ol>
+        <p>
+          The rewriter strips conversational filler, expands synonyms, and targets specific semantic keywords.
+        </p>
+      </div>
+    </section>
+
+    <section id="sec-failsafe">
+      <h2>5. The Grader Fail-Safe Architecture</h2>
+      <div class="card">
+        <h3>The Silent Failure Anti-Pattern</h3>
+        <p>
+          Previously, if the relevance grader crashed (due to LLM network timeout or rate limits), it caught the exception and silently assumed relevance:
+        </p>
+        <pre><code># FLAWED PATTERN (Silent Swallowing):
+except Exception as e:
+    logger.warning(f"Grading failed: {e}")
+    relevant = True  # Pretends evaluation succeeded, concealing errors!</code></pre>
+        <h3>The Production Fail-Safe Solution</h3>
+        <p>
+          Silent failure is dangerous in enterprise auditing. When grading fails, the system logs the full stack trace with <code>logger.error(..., exc_info=True)</code> and explicitly tags the context payload with a loud diagnostic banner:
+        </p>
+        <pre><code># PRODUCTION FAIL-SAFE:
+except Exception as e:
+    logger.error(
+        f"CRITICAL: Retrieval grading failed on attempt {attempt}: {e}. "
+        f"Returning retrieval context with unverified flag to prevent silent failure.",
+        exc_info=True,
+    )
+    return f"[UNVERIFIED RETRIEVAL - Grader Evaluation Failed: {e}]\n\n{context}"</code></pre>
+      </div>
+    </section>
+
+    <section id="sec-code">
+      <h2>6. Code Implementation Deep-Dive (<code>src/tools/document_search.py</code>)</h2>
+      <div class="card">
+        <pre><code>def build_document_search_tool(retriever, grader_llm, rewriter_chain, max_attempts: int):
+    @tool
+    async def search_documents(query: str, config: RunnableConfig) -> str:
+        current_query = query
+        conf = config.get("configurable", {}) if isinstance(config, dict) else {}
+        tenant_id = conf.get("tenant_id")
+        active_filter = {"tenant_id": str(tenant_id)} if tenant_id else None
+
+        for attempt in range(1, max_attempts + 1):
+            documents = await retriever.ainvoke({
+                "question": current_query,
+                "metadata_filter": active_filter,
+            })
+            if not documents:
+                return "No relevant documents were found for this query."
+
+            context = "\n\n".join([format_document_citation(doc, i)[0] for i, doc in enumerate(documents, 1)])
+
+            # Structured Grading with Fail-Safe Fallback
+            try:
+                parser = PydanticOutputParser(pydantic_object=RetrievalGrade)
+                grade = await grader_llm.ainvoke({
+                    "question": query,
+                    "context": context,
+                    "format_instructions": parser.get_format_instructions(),
+                })
+                relevant = grade.relevant
+                reason = grade.reason
+            except Exception as e:
+                logger.error(f"CRITICAL: Grading failed: {e}", exc_info=True)
+                return f"[UNVERIFIED RETRIEVAL - Grader Evaluation Failed: {e}]\n\n{context}"
+
+            if relevant:
+                return context
+
+            # Self-Correction: Rewriting Query for next attempt
+            if attempt < max_attempts:
+                current_query = await rewriter_chain.ainvoke({
+                    "question": query,
+                    "reason": reason,
+                })
+
+        return "Note: Relevance could not be fully confirmed.\n\n" + context
+
+    return search_documents</code></pre>
+      </div>
+    </section>
+
+    <section id="sec-interview">
+      <h2>7. Senior Engineering Interview Defense</h2>
+      <div class="card">
+        <div class="interview-q">
+          <strong>Q1: Why should an agentic RAG system rewrite queries instead of asking the user for clarification?</strong>
+          <p>
+            <em>Answer:</em> Frequent clarification questions create high user friction and poor UX. Most retrieval failures stem from vocabulary mismatch or anaphora ("Can I change it?"). By incorporating the conversation history and the grader's diagnostic rationale, the rewriter can autonomously resolve ambiguities (e.g. rewriting to "Can employee change departure date on booking BK-000001?"). If re-retrieval still fails after the maximum attempts (2), the system then gracefully falls back or clarifies.
+          </p>
+        </div>
+
+        <div class="interview-q">
+          <strong>Q2: Why is structured output via Pydantic preferable over free-form JSON parsing in LLM grading?</strong>
+          <p>
+            <em>Answer:</em> LLMs frequently return leading conversational filler (e.g., "Here is the JSON evaluation: ...") or unescaped quotes that break standard <code>json.loads()</code>. PydanticOutputParser injects formal schema instructions and schema validation. If the output fails validation, the error is caught deterministically rather than propagating an uncaught JSONDecodeError.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

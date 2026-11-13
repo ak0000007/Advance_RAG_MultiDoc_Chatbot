@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Module 02: Ingestion, Chunking & Deduplication Engine</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });</script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #6366f1;
+      --accent: #06b6d4;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans); line-height: 1.6; display: flex; }
+    nav.sidebar { width: 300px; height: 100vh; position: sticky; top: 0; background: #090d16; border-right: 1px solid var(--card-border); padding: 24px 16px; overflow-y: auto; font-size: 0.88rem; flex-shrink: 0; }
+    nav.sidebar h2 { font-size: 1rem; color: var(--accent); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    nav.sidebar a { display: block; color: var(--text-muted); text-decoration: none; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
+    nav.sidebar a:hover, nav.sidebar a.active { color: var(--text); background: rgba(99, 102, 241, 0.15); border-left: 3px solid var(--primary); }
+    .hub-link { display: inline-block; margin-bottom: 18px; color: var(--primary); font-weight: 600; text-decoration: none; }
+    main.content { flex: 1; padding: 40px 60px; max-width: 1200px; overflow-x: hidden; }
+    h1 { font-size: 2.2rem; color: #fff; margin-bottom: 8px; }
+    .subtitle { color: var(--accent); font-size: 1.1rem; margin-bottom: 30px; }
+    h2 { font-size: 1.5rem; margin: 36px 0 16px 0; color: #e0e7ff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px; }
+    h3 { font-size: 1.2rem; margin: 20px 0 10px 0; color: #a5b4fc; }
+    p { margin-bottom: 14px; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 24px; margin-bottom: 24px; }
+    .alert { padding: 16px 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid; }
+    .alert-info { background: rgba(6, 182, 212, 0.1); border-color: var(--accent); color: #a5f3fc; }
+    .alert-warning { background: rgba(245, 158, 11, 0.1); border-color: var(--warning); color: #fde68a; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--card-border); padding: 10px 14px; text-align: left; }
+    th { background: #1e293b; color: #cbd5e1; font-weight: 600; }
+    tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+    pre { background: var(--code-bg); border: 1px solid #1e293b; border-radius: 8px; padding: 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 16px; }
+    code { font-family: var(--font-mono); color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
+    .mermaid { background: #0f172a; padding: 20px; border-radius: 8px; border: 1px solid var(--card-border); margin: 20px 0; }
+    ul, ol { margin-left: 24px; margin-bottom: 16px; }
+    li { margin-bottom: 6px; }
+    .interview-q { background: #1e1b4b; border-left: 4px solid var(--primary); padding: 16px; margin: 16px 0; border-radius: 0 8px 8px 0; }
+    .interview-q strong { color: #c7d2fe; display: block; margin-bottom: 6px; font-size: 1.05rem; }
+  </style>
+</head>
+<body>
+
+  <nav class="sidebar">
+    <a href="index.html" class="hub-link">← Master Index</a>
+    <h2>Module 02 Navigation</h2>
+    <a href="#sec-overview">1. Ingestion Overview</a>
+    <a href="#sec-multiformat">2. Multi-Format Loaders</a>
+    <a href="#sec-chunking">3. Semantic Chunking Strategy</a>
+    <a href="#sec-dedup">4. Deterministic Hashing & UUIDv5</a>
+    <a href="#sec-pipeline">5. Ingestion & Sync Pipeline</a>
+    <a href="#sec-code">6. Code Implementation Deep-Dive</a>
+    <a href="#sec-decisions">7. Engineering Trade-Offs</a>
+    <a href="#sec-interview">8. Senior Interview Defense</a>
+  </nav>
+
+  <main class="content">
+    <h1>Module 02: Ingestion, Chunking & Deduplication Engine</h1>
+    <p class="subtitle">Multi-Format Parsing, Semantic Text Splitting & Idempotent Upserting to Vector & Keyword Stores</p>
+
+    <section id="sec-overview">
+      <h2>1. Ingestion Overview & Problem Space</h2>
+      <div class="card">
+        <p>
+          The foundation of any enterprise RAG system is its document ingestion pipeline. In commercial travel operations, documents arrive in multiple formats: PDF contracts, Word policy amendments, CSV airline price grids, Excel booking sheets, and plain text FAQs.
+        </p>
+        <p>
+          <strong>Common Ingestion Failures:</strong>
+        </p>
+        <ul>
+          <li><strong>Random ID Duplication:</strong> Generating random UUIDs on re-indexing duplicates all vector embeddings, causing index bloat and degraded retrieval accuracy.</li>
+          <li><strong>Vector/Keyword Store Drift:</strong> Populating Qdrant while failing to update BM25 destroys hybrid search parity.</li>
+          <li><strong>Context Fragmentation:</strong> Naive character splitting chops crucial policy sentences in half (e.g., splitting "$250 cap" across chunks).</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="sec-multiformat">
+      <h2>2. Multi-Format Document Loaders</h2>
+      <div class="card">
+        <p>
+          <code>MultiDocumentLoader</code> (in <code>src/ingestion/loader.py</code>) supports heterogenous file formats via specialized parsers:
+        </p>
+        <table>
+          <thead>
+            <tr><th>File Type</th><th>Parser Library</th><th>Extraction Strategy</th><th>Metadata Stamped</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>.pdf</code></td><td><code>PyMuPDFLoader</code> / <code>PyPDFLoader</code></td><td>Fast visual layout extraction with page numbers</td><td><code>page</code>, <code>source</code>, <code>title</code></td></tr>
+            <tr><td><code>.docx</code></td><td><code>Docx2txtLoader</code></td><td>Paragraph and table text extraction</td><td><code>source</code>, <code>file_name</code></td></tr>
+            <tr><td><code>.xlsx / .xls</code></td><td><code>pandas</code> + <code>openpyxl</code></td><td>Tabular row-by-row string serialization</td><td><code>sheet_name</code>, <code>row_count</code></td></tr>
+            <tr><td><code>.csv</code></td><td><code>CSVLoader</code></td><td>Field-value formatted structured entries</td><td><code>row</code>, <code>source</code></td></tr>
+            <tr><td><code>.txt / .md</code></td><td><code>TextLoader</code></td><td>UTF-8 raw string buffer reading</td><td><code>source</code>, <code>file_name</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sec-chunking">
+      <h2>3. Semantic Chunking Strategy</h2>
+      <div class="card">
+        <p>
+          We employ <code>DocumentChunker</code> (in <code>src/chunking/splitter.py</code>), configuring <code>RecursiveCharacterTextSplitter</code> with:
+        </p>
+        <ul>
+          <li><strong>Chunk Size:</strong> <code>1,000</code> characters (~200–250 tokens), aligning with paragraph boundaries.</li>
+          <li><strong>Chunk Overlap:</strong> <code>200</code> characters (~40–50 tokens), preventing semantic cutoff at boundaries.</li>
+          <li><strong>Separators Priority:</strong> <code>["\n\n", "\n", " ", ""]</code>. Keeps full paragraphs together first, sentences second, and individual words third.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="sec-dedup">
+      <h2>4. Deterministic Hashing & RFC 4122 UUIDv5</h2>
+      <div class="card">
+        <p>
+          To ensure <strong>idempotent ingestion</strong>, every chunk's unique identifier is deterministically computed from its invariant properties. Re-running <code>ingest.py</code> ten times will produce identical IDs, enabling upsert without duplicate vector growth.
+        </p>
+        <div class="mermaid">
+flowchart LR
+    Tenant["tenant_id\n('acme_corp')"] --> Formatter
+    Source["source path\n('policy.txt')"] --> Formatter
+    ChunkIdx["chunk index\n(0, 1, 2...)"] --> Formatter
+    Content["chunk content\n('Cancellations...')"] --> SHA256["SHA-256 Hash"]
+    SHA256 --> Formatter["Formatted Seed:\n{tenant_id}:{source}:{idx}:{hash}"]
+    Formatter --> UUIDv5["uuid.uuid5(NAMESPACE_URL, seed)"]
+    UUIDv5 --> CID["Deterministic RFC 4122 UUIDv5"]
+        </div>
+      </div>
+    </section>
+
+    <section id="sec-pipeline">
+      <h2>5. Ingestion & Dual Store Synchronization</h2>
+      <div class="card">
+        <p>
+          Both dense (Qdrant) and sparse (BM25) stores must be updated in unison. <code>ingest.py</code> synchronizes both stores:
+        </p>
+        <div class="mermaid">
+flowchart TD
+    RawDocs["Raw Document Directory (data/)"] --> Loader["MultiDocumentLoader"]
+    Loader --> Chunker["DocumentChunker (1000/200)"]
+    Chunker --> Dedup["ID Generator (UUIDv5) + Tenant Stamping"]
+    Dedup --> Split{"Parallel Upsert"}
+    Split --> Qdrant[("Qdrant Vector Store\n(add_documents with doc_ids)")]
+    Split --> BM25[("BM25 Inverted Index\n(add_documents + save to pickle)")]
+        </div>
+      </div>
+    </section>
+
+    <section id="sec-code">
+      <h2>6. Code Implementation Deep-Dive (<code>ingest.py</code>)</h2>
+      <div class="card">
+        <pre><code>def generate_chunk_id(doc, chunk_idx: int, tenant_id: str = "default") -> str:
+    """Generate deterministic RFC 4122 UUIDv5 based on tenant, source, index, and content hash."""
+    source = doc.metadata.get("source", "unknown")
+    content_hash = hashlib.sha256(doc.page_content.encode("utf-8")).hexdigest()
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{tenant_id}:{source}:{chunk_idx}:{content_hash}"))
+
+def main():
+    parser = argparse.ArgumentParser(description="Ingest documents with deterministic IDs and tenant isolation.")
+    parser.add_argument("--data-dir", default="./data", help="Directory with documents to index")
+    parser.add_argument("--tenant-id", default="default", help="Tenant ID for document isolation")
+    args = parser.parse_args()
+
+    loader = MultiDocumentLoader(data_directory=args.data_dir)
+    docs = loader.load_directory()
+    
+    chunker = DocumentChunker(chunk_size=1000, chunk_overlap=200)
+    chunks = chunker.split_documents(docs)
+
+    doc_ids = []
+    for idx, chunk in enumerate(chunks):
+        chunk.metadata["tenant_id"] = args.tenant_id
+        cid = generate_chunk_id(chunk, idx, tenant_id=args.tenant_id)
+        chunk.id = cid
+        chunk.metadata["chunk_id"] = cid
+        doc_ids.append(cid)
+    
+    # Store in Qdrant with deterministic IDs (idempotent upsert)
+    qdrant.vector_store.add_documents(chunks, ids=doc_ids)
+
+    # Persist in BM25Store
+    bm25_store = BM25Store.load(bm25_path) if bm25_path.exists() else BM25Store()
+    bm25_store.add_documents(chunks)
+    bm25_store.save(bm25_path)</code></pre>
+      </div>
+    </section>
+
+    <section id="sec-decisions">
+      <h2>7. Key Engineering Trade-Offs</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Chosen Approach</th><th>Alternative Rejected</th><th>Engineering Rationale</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Chunk Size</strong></td>
+              <td>1,000 chars (~200 tokens)</td>
+              <td>512 tokens / 2,000 tokens</td>
+              <td>1,000 chars captures complete policy rules without diluting vector specificity.</td>
+            </tr>
+            <tr>
+              <td><strong>ID Generation</strong></td>
+              <td>RFC 4122 UUIDv5 hash</td>
+              <td>Random <code>uuid.uuid4()</code></td>
+              <td>UUIDv5 enables idempotent re-indexing. Random UUIDs cause duplicate vectors.</td>
+            </tr>
+            <tr>
+              <td><strong>Sparse Persistence</strong></td>
+              <td>Pickle Serialization</td>
+              <td>External Elasticsearch cluster</td>
+              <td>Pickle provides sub-millisecond local in-memory loads without heavyweight server infrastructure.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sec-interview">
+      <h2>8. Senior Engineering Interview Defense</h2>
+      <div class="card">
+        <div class="interview-q">
+          <strong>Q1: What happens if an operator runs the ingestion script twice on the same folder?</strong>
+          <p>
+            <em>Answer:</em> Because we use deterministic UUIDv5 hashing based on <code>tenant:source:chunk_index:content_hash</code>, re-running ingestion generates the exact same document IDs. Qdrant performs an idempotent point upsert, overwriting existing vectors with identical embeddings. In BM25Store, <code>add_documents</code> checks <code>existing_keys</code> and prunes duplicate chunk IDs before updating the inverted index.
+          </p>
+        </div>
+
+        <div class="interview-q">
+          <strong>Q2: Why is chunk overlap necessary, and what are the trade-offs of setting it too high?</strong>
+          <p>
+            <em>Answer:</em> Overlap guarantees that sentences crossing chunk boundaries are not truncated, maintaining semantic coherence. However, setting overlap too high (e.g. >40%) bloats the vector index size, increases embedding generation costs, and increases the risk of returning redundant chunks during retrieval.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

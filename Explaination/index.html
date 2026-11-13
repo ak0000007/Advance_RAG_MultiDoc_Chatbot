@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Advance_RAG_Chatbot — Technical Architecture & Interview Mastery Portal</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });</script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+      --accent: #06b6d4;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans); line-height: 1.6; padding: 40px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    header { text-align: center; margin-bottom: 50px; }
+    h1 { font-size: 2.6rem; color: #fff; margin-bottom: 12px; font-weight: 800; }
+    .subtitle { color: var(--accent); font-size: 1.2rem; max-width: 800px; margin: 0 auto 20px auto; }
+    .badge-bar { display: flex; justify-content: center; gap: 10px; margin-bottom: 30px; }
+    .badge { padding: 4px 12px; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; }
+    .badge-primary { background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid #6366f1; }
+    .badge-success { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
+    .badge-warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
+    
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 24px; margin-bottom: 50px; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 24px; transition: all 0.2s ease; display: flex; flex-direction: column; justify-content: space-between; }
+    .card:hover { transform: translateY(-3px); border-color: var(--primary); box-shadow: 0 8px 24px rgba(99, 102, 241, 0.15); }
+    .card-number { font-size: 0.8rem; font-weight: 700; color: var(--accent); text-transform: uppercase; margin-bottom: 6px; }
+    .card h3 { font-size: 1.3rem; color: #fff; margin-bottom: 10px; }
+    .card p { color: var(--text-muted); font-size: 0.92rem; margin-bottom: 18px; flex: 1; }
+    .card a.btn { display: inline-block; background: var(--primary); color: #fff; text-decoration: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; text-align: center; transition: background 0.2s; }
+    .card a.btn:hover { background: var(--primary-hover); }
+
+    .arch-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 30px; margin-bottom: 50px; }
+    .arch-card h2 { font-size: 1.6rem; color: #fff; margin-bottom: 16px; }
+    .mermaid { background: #0f172a; padding: 20px; border-radius: 8px; border: 1px solid var(--card-border); margin-top: 16px; }
+
+    .interview-summary { background: #131b2e; border: 1px solid #2563eb; border-radius: 12px; padding: 30px; margin-bottom: 50px; }
+    .interview-summary h2 { color: #93c5fd; font-size: 1.6rem; margin-bottom: 16px; }
+    .cheatsheet-item { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+    .cheatsheet-item strong { color: #fff; display: block; font-size: 1.05rem; margin-bottom: 4px; }
+    .cheatsheet-item span { color: var(--text-muted); font-size: 0.92rem; }
+
+    footer { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding-top: 20px; border-top: 1px solid var(--card-border); }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <h1>Advance_RAG_Chatbot</h1>
+      <p class="subtitle">Complete Technical Architecture, Implementation Deep-Dive & Senior Engineering Interview Preparation Portal</p>
+      <div class="badge-bar">
+        <span class="badge badge-primary">LangGraph ReAct</span>
+        <span class="badge badge-success">Hybrid RRF (Qdrant + BM25)</span>
+        <span class="badge badge-warning">Cross-Encoder Rerank</span>
+        <span class="badge badge-primary">Human-in-the-Loop (HITL)</span>
+        <span class="badge badge-success">Multi-Tenant Isolation</span>
+      </div>
+    </header>
+
+    <!-- Master Architecture Overview -->
+    <section class="arch-card">
+      <h2>Complete End-to-End System Topology</h2>
+      <p>High-level orchestration flow from FastAPI ingress to LangGraph ReAct state machine, hybrid retrieval, and Salesforce CRM execution:</p>
+      <div class="mermaid">
+flowchart TD
+    Client["Client / UI"] -->|"POST /chat\n(Bearer / X-API-Key)"| Ingress["FastAPI Gateway (src/api/routes.py)"]
+    Ingress -->|"Constant-Time Digest Check"| Auth["AuthUser(username, tenant_id)"]
+    Auth --> Config["RunnableConfig(configurable={tenant_id, sf_username})"]
+    Config --> Graph["LangGraph State Engine (src/graph/graph.py)"]
+
+    subgraph "ReAct Orchestration & Memory"
+        Graph --> AgentNode["Agent Node (ReAct Planner LLM)"]
+        AgentNode -->|"tool_calls"| ToolNode["ToolNode (src/tools/)"]
+        ToolNode --> GuardRouter{"Requires Approval?"}
+        GuardRouter -->|"No"| AgentNode
+        GuardRouter -->|"Yes"| ApprovalNode["human_approval Node (interrupt)"]
+        ApprovalNode -->|"POST /chat/resume"| AgentNode
+        Graph <-->|"Checkpointing"| PG[("PostgreSQL\n(AsyncPostgresSaver)")]
+    end
+
+    subgraph "Dual-Engine Retrieval Stack"
+        ToolNode -->|"search_documents"| Hybrid["HybridRetriever (RRF k=60)"]
+        Hybrid -->|"tenant_id filter"| Qdrant[("Qdrant Vector DB\n(BGE-M3 Dense)")]
+        Hybrid -->|"tenant_id filter"| BM25[("BM25Store\n(Inverted Index)")]
+        Hybrid --> Reranker["Cross-Encoder Reranker\n(bge-reranker-v2-m3)"]
+        Reranker --> Grader{"Relevance Grader\n(Fail-Safe LLM)"}
+    end
+
+    subgraph "CRM Transaction Safety"
+        ToolNode -->|"CRM Operations"| Guards{"Write Guards\n(Single, Bulk, Cap)"}
+        Guards --> SFClient["SalesforceAsyncClient\n/ MockSalesforce"]
+        SFClient --> Apex[("Apex REST Endpoints")]
+    end
+      </div>
+    </section>
+
+    <!-- 10 Section Cards Grid -->
+    <section class="grid">
+      <!-- Card 1 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 01</div>
+          <h3>System Overview & Multi-Tenant Foundations</h3>
+          <p>Product vision, end-to-end architecture, multi-tenant document isolation, and constant-time API token security (<code>secrets.compare_digest</code>).</p>
+        </div>
+        <a href="01-system-overview-and-architecture.html" class="btn">Explore Module 01 →</a>
+      </div>
+
+      <!-- Card 2 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 02</div>
+          <h3>Ingestion, Chunking & Deduplication</h3>
+          <p>Multi-format parsing (PDF, DOCX, CSV, Excel), RecursiveCharacterTextSplitter with token-aware overlaps, and RFC 4122 UUIDv5 deterministic hashing.</p>
+        </div>
+        <a href="02-ingestion-chunking-and-deduplication.html" class="btn">Explore Module 02 →</a>
+      </div>
+
+      <!-- Card 3 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 03</div>
+          <h3>Hybrid Retrieval & Reciprocal Rank Fusion</h3>
+          <p>Dual-engine dense (Qdrant) and sparse (BM25) search, concurrent execution via <code>asyncio.gather</code>, and RRF rank normalization.</p>
+        </div>
+        <a href="03-hybrid-retrieval-and-rrf.html" class="btn">Explore Module 03 →</a>
+      </div>
+
+      <!-- Card 4 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 04</div>
+          <h3>Cross-Encoder Reranking & Calibration</h3>
+          <p>Bi-Encoder vs Cross-Encoder theory, deep all-to-all cross attention with <code>bge-reranker-v2-m3</code>, lazy singleton locking, and confidence gating.</p>
+        </div>
+        <a href="04-cross-encoder-reranking.html" class="btn">Explore Module 04 →</a>
+      </div>
+
+      <!-- Card 5 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 05</div>
+          <h3>Self-Correcting RAG & Grading</h3>
+          <p>Corrective RAG (CRAG) loop, Pydantic structured output grading, contextual query rewriting, and the fail-safe unverified banner pattern.</p>
+        </div>
+        <a href="05-self-correcting-rag-and-grading.html" class="btn">Explore Module 05 →</a>
+      </div>
+
+      <!-- Card 6 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 06</div>
+          <h3>LangGraph ReAct Engine & State</h3>
+          <p>Cyclic state machines vs linear DAGs, <code>RAGState</code> with <code>add_messages</code> reducer, and durable PostgreSQL checkpointing.</p>
+        </div>
+        <a href="06-langgraph-react-engine-and-state.html" class="btn">Explore Module 06 →</a>
+      </div>
+
+      <!-- Card 7 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 07</div>
+          <h3>Human-in-the-Loop (HITL) CRM Execution</h3>
+          <p>Two-phase commit for AI agents, LangGraph <code>interrupt()</code> lifecycle, <code>POST /chat/resume</code>, and user context retention across turns.</p>
+        </div>
+        <a href="07-hitl-approval-and-crm-transactions.html" class="btn">Explore Module 07 →</a>
+      </div>
+
+      <!-- Card 8 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 08</div>
+          <h3>Security Guards & Injection Defenses</h3>
+          <p>Three-tier write guards (single record, word-boundary bulk intent, session write caps), SOQL injection allowlists, and prompt XML fencing.</p>
+        </div>
+        <a href="08-security-guards-and-injection-defenses.html" class="btn">Explore Module 08 →</a>
+      </div>
+
+      <!-- Card 9 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 09</div>
+          <h3>Enterprise API, SSE Streaming & Clients</h3>
+          <p>FastAPI async lifespans, Server-Sent Events (SSE) token multiplexing, persistent HTTP client connection pooling, and UI citation chips.</p>
+        </div>
+        <a href="09-fastapi-sse-streaming-and-client.html" class="btn">Explore Module 09 →</a>
+      </div>
+
+      <!-- Card 10 -->
+      <div class="card">
+        <div>
+          <div class="card-number">Module 10</div>
+          <h3>RAG Benchmark Harness & Observability</h3>
+          <p>Statistical IR metrics (Hit@k, Recall@k, MRR, nDCG@k without chunk ID churn), 4-way pipeline benchmarking, LLM judges, and OpenTelemetry tracing.</p>
+        </div>
+        <a href="10-rag-eval-harness-and-observability.html" class="btn">Explore Module 10 →</a>
+      </div>
+    </section>
+
+    <!-- Fast Interview Cheatsheet -->
+    <section class="interview-summary">
+      <h2>Senior Engineering Interview Cheatsheet (Top 10 Talking Points)</h2>
+
+      <div class="cheatsheet-item">
+        <strong>1. Why Hybrid Search (Dense + Sparse) with RRF?</strong>
+        <span>Dense vectors capture conceptual semantics but fail on numbers and codes ("$250 cap", "BK-001"). BM25 catches exact lexical tokens. Reciprocal Rank Fusion (RRF with k=60) merges both using rank positions without needing arbitrary score scaling.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>2. Why Two-Stage Retrieval with Cross-Encoders?</strong>
+        <span>Bi-Encoders independently embed query and doc into vectors, allowing fast vector search (O(1) cosine). Cross-Encoders concatenate query and doc into Transformer layers, computing full token-to-token cross-attention for high precision. Two-stage searches top-20 with Bi-Encoder, then reranks down to top-5 with Cross-Encoder.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>3. How is Multi-Tenant Isolation Enforced in Vector DBs?</strong>
+        <span>Pre-filtering rather than post-filtering. Every chunk is stamped with <code>tenant_id</code> during ingestion. The API extracts <code>tenant_id</code> from authenticated tokens and passes it into <code>RunnableConfig</code>, which enforces mandatory Qdrant payload filters and BM25 inverted index constraints.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>4. How Does the Human-in-the-Loop (HITL) Gate Work?</strong>
+        <span>Mutating tools never execute DML directly; they return a proposed payload. LangGraph routes this to <code>human_approval</code> which fires <code>interrupt()</code>, serializing the state to PostgreSQL. The user reviews the payload in the UI and calls <code>/chat/resume</code> with <code>Command(resume=decision)</code> to execute the change.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>5. How Do You Prevent Runaway LLM Loops and Mass Updates?</strong>
+        <span>Three-tier write guards: <code>single_record_guard</code> checks 15/18 alphanumeric SFID regex; <code>bulk_intent_guard</code> uses word-boundary regex <code>\b(all|every|bulk)\b</code> to block mass actions; <code>session_write_cap</code> caps total approved writes to 5 per conversation.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>6. Why is Constant-Time Comparison (secrets.compare_digest) Necessary?</strong>
+        <span>Standard string equality (<code>token == secret</code>) aborts at the first unequal byte, leaking key characters via microsecond timing differences. <code>secrets.compare_digest</code> always evaluates all bytes in constant time.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>7. What is the Fail-Safe Grader Pattern?</strong>
+        <span>Silent exception swallowing is an anti-pattern. If the LLM grader crashes on timeout or rate limit, the system logs full diagnostics with <code>logger.error(..., exc_info=True)</code> and tags context with <code>[UNVERIFIED RETRIEVAL]</code> so downstream components and users know the data was unverified.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>8. Why Use Idempotent Deterministic Chunk IDs (UUIDv5)?</strong>
+        <span>Random UUIDs cause duplicate vectors upon re-indexing. RFC 4122 UUIDv5 hashes <code>{tenant_id}:{source}:{chunk_idx}:{content_hash}</code>, guaranteeing that re-ingesting documents results in clean, idempotent upserts in Qdrant and BM25.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>9. How Do You Prevent PyTorch Event Loop Blocking in FastAPI?</strong>
+        <span>Inference calls like <code>CrossEncoder.predict()</code> are CPU/GPU-bound synchronous functions that block FastAPI's single-threaded event loop. We wrap them in <code>await asyncio.to_thread(model.predict, pairs)</code>, executing them in thread worker pools.</span>
+      </div>
+
+      <div class="cheatsheet-item">
+        <strong>10. How Does the Evaluation Benchmark Avoid Chunk ID Churn?</strong>
+        <span>Our evaluation harness in <code>evals/rag/metrics.py</code> evaluates relevance using normalized source file names and content substring presence rather than brittle chunk IDs. This allows engineers to tune chunk size or overlap without breaking the evaluation dataset.</span>
+      </div>
+    </section>
+
+    <footer>
+      <p>Advance_RAG_Chatbot System Architecture & Interview Preparation Suite • Generated for Akhil Saini</p>
+    </footer>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Module 01: System Overview, Architecture & Multi-Tenant Foundations</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });</script>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #6366f1;
+      --accent: #06b6d4;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-sans); line-height: 1.6; display: flex; }
+    nav.sidebar { width: 300px; height: 100vh; position: sticky; top: 0; background: #090d16; border-right: 1px solid var(--card-border); padding: 24px 16px; overflow-y: auto; font-size: 0.88rem; flex-shrink: 0; }
+    nav.sidebar h2 { font-size: 1rem; color: var(--accent); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    nav.sidebar a { display: block; color: var(--text-muted); text-decoration: none; padding: 6px 12px; border-radius: 6px; margin-bottom: 4px; transition: all 0.2s; }
+    nav.sidebar a:hover, nav.sidebar a.active { color: var(--text); background: rgba(99, 102, 241, 0.15); border-left: 3px solid var(--primary); }
+    .hub-link { display: inline-block; margin-bottom: 18px; color: var(--primary); font-weight: 600; text-decoration: none; }
+    main.content { flex: 1; padding: 40px 60px; max-width: 1200px; overflow-x: hidden; }
+    h1 { font-size: 2.2rem; color: #fff; margin-bottom: 8px; }
+    .subtitle { color: var(--accent); font-size: 1.1rem; margin-bottom: 30px; }
+    h2 { font-size: 1.5rem; margin: 36px 0 16px 0; color: #e0e7ff; border-bottom: 1px solid var(--card-border); padding-bottom: 8px; }
+    h3 { font-size: 1.2rem; margin: 20px 0 10px 0; color: #a5b4fc; }
+    p { margin-bottom: 14px; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 24px; margin-bottom: 24px; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; margin-right: 8px; }
+    .badge-primary { background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid #6366f1; }
+    .badge-success { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
+    .badge-warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
+    .alert { padding: 16px 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid; }
+    .alert-info { background: rgba(6, 182, 212, 0.1); border-color: var(--accent); color: #a5f3fc; }
+    .alert-warning { background: rgba(245, 158, 11, 0.1); border-color: var(--warning); color: #fde68a; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+    th, td { border: 1px solid var(--card-border); padding: 10px 14px; text-align: left; }
+    th { background: #1e293b; color: #cbd5e1; font-weight: 600; }
+    tr:nth-child(even) { background: rgba(255, 255, 255, 0.02); }
+    pre { background: var(--code-bg); border: 1px solid #1e293b; border-radius: 8px; padding: 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 16px; }
+    code { font-family: var(--font-mono); color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; }
+    .mermaid { background: #0f172a; padding: 20px; border-radius: 8px; border: 1px solid var(--card-border); margin: 20px 0; }
+    ul, ol { margin-left: 24px; margin-bottom: 16px; }
+    li { margin-bottom: 6px; }
+    .interview-q { background: #1e1b4b; border-left: 4px solid var(--primary); padding: 16px; margin: 16px 0; border-radius: 0 8px 8px 0; }
+    .interview-q strong { color: #c7d2fe; display: block; margin-bottom: 6px; font-size: 1.05rem; }
+  </style>
+</head>
+<body>
+
+  <nav class="sidebar">
+    <a href="index.html" class="hub-link">← Master Index</a>
+    <h2>Module 01 Navigation</h2>
+    <a href="#sec-overview">1. Executive Overview</a>
+    <a href="#sec-business">2. Business Domain & Use Cases</a>
+    <a href="#sec-arch">3. End-to-End System Architecture</a>
+    <a href="#sec-multitenant">4. Multi-Tenant Isolation Design</a>
+    <a href="#sec-auth">5. Constant-Time Auth & Timing Attacks</a>
+    <a href="#sec-dataflow">6. Request Execution Lifecycle</a>
+    <a href="#sec-code">7. Production Code Deep-Dive</a>
+    <a href="#sec-decisions">8. Key Architectural Trade-Offs</a>
+    <a href="#sec-mental">9. Mental Models & Analogies</a>
+    <a href="#sec-interview">10. Senior Interview Defense</a>
+  </nav>
+
+  <main class="content">
+    <h1>Module 01: System Overview, Architecture & Multi-Tenant Foundations</h1>
+    <p class="subtitle">Enterprise Travel Operations AI Copilot with LangGraph, Hybrid Retrieval & Multi-Tenant CRM</p>
+
+    <section id="sec-overview">
+      <h2>1. Executive Overview & Problem Space</h2>
+      <div class="card">
+        <p>
+          <strong>Advance_RAG_Chatbot</strong> is an enterprise-grade autonomous AI copilot designed for corporate travel operations. Unlike generic Q&A chatbots, it executes complex transactional workflows combining:
+        </p>
+        <ul>
+          <li><strong>Document-Grounded RAG:</strong> Answers policy, flight, hotel, and insurance inquiries using hybrid semantic + keyword retrieval without hallucinating.</li>
+          <li><strong>Transactional Salesforce CRM Operations:</strong> Inspects and modifies live enterprise records (Bookings, Travel Packages, Payments, Opportunities) via custom Apex REST endpoints.</li>
+          <li><strong>Deterministic Human-in-the-Loop (HITL):</strong> Reversible state interrupts pause mutating operations until an authorized human operator approves the payload.</li>
+          <li><strong>Multi-Tenant Data Partitioning:</strong> Strictly isolates vector chunks, inverted indices, and session state across corporate client accounts.</li>
+        </ul>
+        <div class="alert alert-info">
+          <strong>Key Engineering Focus:</strong> Productionizing AI requires moving past simple chains to state machines, strict authorization boundaries, constant-time cryptography, and deterministic safety guards.
+        </div>
+      </div>
+    </section>
+
+    <section id="sec-business">
+      <h2>2. Business Domain & Use Cases</h2>
+      <div class="card">
+        <h3>Enterprise Travel Operational Challenges</h3>
+        <p>
+          Corporate travel management agencies manage thousands of employees across hundreds of client companies. Each corporate client has unique negotiated hotel caps, cancellation clauses, flight class allowances, and booking rules.
+        </p>
+        <table>
+          <thead>
+            <tr><th>Interaction Flow</th><th>User Intent</th><th>Technical Path</th><th>Enforced Boundary</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Policy Inquiry</strong></td>
+              <td>"Can an employee book a $280 hotel in London?"</td>
+              <td><code>search_documents</code> → Hybrid RRF → Grader → Synthesis</td>
+              <td>Scoped strictly to caller's corporate <code>tenant_id</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>CRM Record Lookup</strong></td>
+              <td>"Show the status and travelers for BK-000001"</td>
+              <td><code>get_booking(name="BK-000001")</code> → Apex REST GET</td>
+              <td>Read-only; uses authenticated <code>sf_username</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>CRM Modification</strong></td>
+              <td>"Update booking BK-000001 to 4 travelers"</td>
+              <td><code>get_booking</code> → <code>update_booking</code> → <code>interrupt()</code></td>
+              <td>Mutating DML requires human review; passes 3 write guards.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sec-arch">
+      <h2>3. End-to-End System Architecture</h2>
+      <div class="card">
+        <div class="mermaid">
+flowchart TD
+    Client["Client / Web UI / Integration"] -->|"POST /chat (Bearer Token)"| API["FastAPI Layer (src/api/routes.py)"]
+    API -->|"Constant-Time Auth (secrets.compare_digest)"| Auth["AuthUser(username, tenant_id)"]
+    Auth -->|"RunnableConfig(configurable={tenant_id, sf_username})"| Engine["LangGraph Engine (src/graph/graph.py)"]
+
+    subgraph "ReAct Loop & State Graph"
+        Engine --> Agent["Agent Node (LLM / ReAct Planner)"]
+        Agent -->|"tool_calls"| Tools["ToolNode (src/tools/)"]
+        Tools --> Router{"Requires Approval?"}
+        Router -->|"No (Read / Search)"| Agent
+        Router -->|"Yes (Mutating Update)"| HITL["human_approval Node (interrupt)"]
+        HITL -->|"POST /chat/resume"| Agent
+    end
+
+    subgraph "Retrieval Engine"
+        Tools -->|"search_documents"| Hybrid["HybridRetriever (RRF)"]
+        Hybrid -->|"tenant_id filter"| Qdrant[("Qdrant Vector DB (BGE-M3)")]
+        Hybrid -->|"tenant_id filter"| BM25[("BM25Store (Inverted Index)")]
+        Hybrid --> Reranker["Cross-Encoder Reranker"]
+        Reranker --> Grader{"Relevance Grader"}
+    end
+
+    subgraph "CRM Infrastructure"
+        Tools -->|"CRM Operations"| Guards{"Write Guards (Single, Bulk, Cap)"}
+        Guards --> SFClient["SalesforceAsyncClient / MockClient"]
+        SFClient --> Apex[("Salesforce Connected App")]
+    end
+
+    Engine <-->|"Checkpointing"| Postgres[("PostgreSQL (AsyncPostgresSaver)")]
+        </div>
+      </div>
+    </section>
+
+    <section id="sec-multitenant">
+      <h2>4. Multi-Tenant Isolation Design</h2>
+      <div class="card">
+        <p>
+          In a multi-tenant corporate copilot, Tenant A (e.g., Acme Corp) must never see or retrieve documents from Tenant B (e.g., Beta Global). A security breach in RAG occurs if a shared vector database returns nearest neighbors across tenant boundaries.
+        </p>
+        <h3>Three-Pillar Isolation Strategy</h3>
+        <ol>
+          <li><strong>Ingestion Namespace Stamping:</strong> At indexing time (<code>ingest.py --tenant-id &lt;id&gt;</code>), every document chunk is assigned a deterministic RFC 4122 UUIDv5 derived from <code>{tenant_id}:{source}:{chunk_idx}:{content_hash}</code>, and stamped with <code>chunk.metadata["tenant_id"] = tenant_id</code>.</li>
+          <li><strong>Identity Scoping via Config:</strong> The incoming API token resolves to an <code>AuthUser</code> containing <code>tenant_id</code>. FastAPI injects this into <code>RunnableConfig["configurable"]["tenant_id"]</code>.</li>
+          <li><strong>Mandatory Retrieval Filtering:</strong> <code>search_documents</code> extracts <code>tenant_id</code> from the config and applies <code>metadata_filter={"tenant_id": tenant_id}</code>. In both Qdrant payload queries and BM25 inverted index lookups, chunks with non-matching tenant IDs are disqualified before scoring.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="sec-auth">
+      <h2>5. Constant-Time Auth & Timing Attack Protection</h2>
+      <div class="card">
+        <p>
+          Standard string equality (<code>token == secret_key</code>) is vulnerable to <strong>timing attacks</strong>. Python compares strings byte-by-byte and terminates execution upon encountering the first mismatched character. By measuring sub-millisecond network latency variations, an attacker can determine the secret key one byte at a time.
+        </p>
+        <pre><code># VULNERABLE:
+if token != required_key:  # Early exit leaks key length and byte positions
+    raise HTTPException(401)
+
+# SECURE (Constant-Time):
+import secrets
+if not secrets.compare_digest(token, required_key):  # Always scans all bytes in fixed time
+    raise HTTPException(401)</code></pre>
+      </div>
+    </section>
+
+    <section id="sec-code">
+      <h2>6. Production Code Deep-Dive</h2>
+      <div class="card">
+        <h3>Authenticated User Resolution & Configuration (<code>src/api/routes.py</code>)</h3>
+        <pre><code>class AuthUser(str):
+    """
+    Authenticated user wrapper carrying username and tenant_id context.
+    Inherits from str so existing string consumers continue to function seamlessly.
+    """
+    username: str
+    tenant_id: str
+
+    def __new__(cls, username: str, tenant_id: str = "default"):
+        obj = super().__new__(cls, username)
+        obj.username = username
+        obj.tenant_id = tenant_id
+        return obj
+
+def _verify_auth_and_get_user(
+    auth_bearer: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
+    api_key: Optional[str] = Security(security_api_key),
+) -> Optional[AuthUser]:
+    token = None
+    if isinstance(auth_bearer, HTTPAuthorizationCredentials):
+        token = auth_bearer.credentials
+    elif isinstance(api_key, str):
+        token = api_key
+
+    # 1. Check api_key_mapping first (maps specific tokens to {username, tenant_id})
+    if settings.api_key_mapping and token:
+        for mapped_key, user_info in settings.api_key_mapping.items():
+            if secrets.compare_digest(token, mapped_key):
+                if isinstance(user_info, dict):
+                    uname = user_info.get("username") or settings.sf_default_username or "api_user"
+                    tid = user_info.get("tenant_id") or "default"
+                else:
+                    uname = str(user_info)
+                    tid = "default"
+                return AuthUser(uname, tid)
+
+    # 2. Check global api_secret_key with constant-time comparison
+    required_key = settings.api_secret_key.get_secret_value() if settings.api_secret_key else None
+    if required_key:
+        if not token or not secrets.compare_digest(token, required_key):
+            raise HTTPException(status_code=401, detail="Invalid authentication credentials.")
+        if settings.sf_default_username:
+            return AuthUser(settings.sf_default_username, "default")
+        return None
+
+    # 3. Dev mode fallback
+    if settings.sf_default_username:
+        return AuthUser(settings.sf_default_username, "default")
+    return None</code></pre>
+      </div>
+    </section>
+
+    <section id="sec-decisions">
+      <h2>7. Key Architectural Decisions & Trade-Offs</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>Decision</th><th>Chosen Approach</th><th>Alternative Rejected</th><th>Engineering Rationale</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Workflow Engine</strong></td>
+              <td>LangGraph StateGraph</td>
+              <td>LangChain SequentialChain / Autogen</td>
+              <td>LangGraph provides first-class <code>interrupt()</code> for HITL, native state checkpointing in Postgres, and cyclic graph execution.</td>
+            </tr>
+            <tr>
+              <td><strong>Multi-Tenancy</strong></td>
+              <td>Metadata Pre-Filtering</td>
+              <td>Separate DB per tenant</td>
+              <td>Separate vector collections per tenant causes connection pool explosion. Metadata pre-filtering scales to 1,000+ tenants efficiently.</td>
+            </tr>
+            <tr>
+              <td><strong>Auth Token Comparison</strong></td>
+              <td><code>secrets.compare_digest</code></td>
+              <td>Standard <code>==</code> operator</td>
+              <td>Eliminates timing attack vectors with zero performance penalty.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sec-mental">
+      <h2>8. Mental Models & Analogies</h2>
+      <div class="card">
+        <h3>The Diplomatic Pouch Analogy</h3>
+        <p>
+          Think of the <code>RunnableConfig</code> as a diplomatic pouch carried with every message through the agent's brain. The LLM can read the user question, but it cannot tamper with the official wax seal containing the <code>tenant_id</code> and <code>sf_username</code>. When a tool opens the pouch to fetch files, it only unlocks documents matching that seal.
+        </p>
+      </div>
+    </section>
+
+    <section id="sec-interview">
+      <h2>9. Senior Engineering Interview Defense</h2>
+      <div class="card">
+        <div class="interview-q">
+          <strong>Q1: How do you prevent cross-tenant data leaks when multiple customers share a single vector database?</strong>
+          <p>
+            <em>Answer:</em> We apply strict pre-filtering at the database level rather than post-filtering in memory. At ingestion time, every chunk is stamped with <code>tenant_id</code>. During retrieval, the authenticated user's <code>tenant_id</code> is retrieved from server-side JWT/API key mappings and injected directly into the Qdrant filter DSL and BM25 store inverted index query. Chunks from other tenants are excluded before cosine or BM25 scoring occurs.
+          </p>
+        </div>
+
+        <div class="interview-q">
+          <strong>Q2: Why use LangGraph over traditional ReAct loops or autonomous agent loops like AutoGPT?</strong>
+          <p>
+            <em>Answer:</em> Enterprise operations require determinism and durability. LangGraph models workflows as explicit cyclic state graphs with checkpointing. If an update requires human approval, LangGraph fires <code>interrupt()</code> and serializes the complete conversation graph to PostgreSQL. The server can restart, and days later a human can resume the exact state via <code>/chat/resume</code>.
+          </p>
+        </div>
+
+        <div class="interview-q">
+          <strong>Q3: How does the system defend against timing attacks on authentication endpoints?</strong>
+          <p>
+            <em>Answer:</em> Standard string comparison aborts at the first non-matching byte, creating subtle differences in response time that attackers use to deduce secrets character-by-character. We enforce <code>secrets.compare_digest()</code>, which executes in constant time regardless of where or whether characters match.
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
