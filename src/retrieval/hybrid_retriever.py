@@ -100,6 +100,11 @@ class HybridRetriever:
                 if hasattr(retriever, "invoke"):
                     return retriever.invoke(target)
                 return retriever(target)
+            elif isinstance(q, str) and ("'str' object has no attribute 'get'" in str(e) or "object has no attribute 'get'" in str(e)):
+                target = {"question": q}
+                if hasattr(retriever, "invoke"):
+                    return retriever.invoke(target)
+                return retriever(target)
             raise
 
     @staticmethod
@@ -113,6 +118,13 @@ class HybridRetriever:
         except (AttributeError, TypeError) as e:
             if isinstance(q, dict) and "question" in q and ("'dict' object" in str(e) or "expected string" in str(e) or "str" in str(e)):
                 target = q["question"]
+                if hasattr(retriever, "ainvoke"):
+                    return await retriever.ainvoke(target)
+                elif hasattr(retriever, "invoke"):
+                    return await asyncio.to_thread(retriever.invoke, target)
+                return await asyncio.to_thread(retriever, target)
+            elif isinstance(q, str) and ("'str' object has no attribute 'get'" in str(e) or "object has no attribute 'get'" in str(e)):
+                target = {"question": q}
                 if hasattr(retriever, "ainvoke"):
                     return await retriever.ainvoke(target)
                 elif hasattr(retriever, "invoke"):

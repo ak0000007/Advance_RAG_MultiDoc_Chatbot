@@ -8,14 +8,14 @@ Compares 4 retrieval pipelines:
 4. Hybrid Fusion + Cross-Encoder Reranking
 
 Outputs:
-- JSON report: evals/results/rag_report.json
+- Live report: evals/results/rag_report.json (mode="live")
+- Mock report: evals/results/rag_report.mock.json (mode="mock")
 - Markdown summary table printed to stdout.
-- Optional --judge: evaluates answer faithfulness and abstention rate on unanswerable questions.
+- Optional --judge: evaluates answer faithfulness and abstention rate.
 
-Usage:
-    python -m evals.rag.runner --dataset evals/rag/rag_dataset.sample.jsonl
-    python -m evals.rag.runner --judge
-    python -m evals.rag.runner --mock  # Offline / CI mode
+Key Invariant:
+Retrieval metrics (Hit@k, Recall@k, MRR, nDCG@k) are computed strictly on answerable
+cases. Unanswerable cases are evaluated separately on model abstention rate.
 """
 
 from __future__ import annotations
@@ -100,7 +100,6 @@ def build_mock_retrievers() -> dict[str, Callable[[str], list[Document]]]:
         scored = []
         for d in mock_docs:
             text = d.page_content.lower()
-            # Semantic keyword weighting
             matches = sum(1 for w in q.split() if len(w) > 3 and w in text)
             if matches > 0:
                 scored.append((matches, d))
@@ -120,7 +119,6 @@ def build_mock_retrievers() -> dict[str, Callable[[str], list[Document]]]:
         return combined
 
     def _rerank_search(query: str) -> list[Document]:
-        # Cross-encoder simulated reranking: best matching document first
         hybrid_docs = _hybrid_search(query)
         q = query.lower()
         def score_relevance(doc):
@@ -142,6 +140,9 @@ def build_mock_retrievers() -> dict[str, Callable[[str], list[Document]]]:
 
 def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
     """Instantiate live production retrievers from project modules."""
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
     from src.api.dependencies import (
         BGEEmbeddings,
         BM25Store,
@@ -167,11 +168,21 @@ def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
             path="./qdrant_data",
         )
 
+    # Validate Qdrant collection is non-empty
+    try:
+        count = qdrant_store.vector_store.client.count("multidoc_rag").count
+        if count == 0:
+            raise RuntimeError("Qdrant collection 'multidoc_rag' has 0 points. Run python ingest.py first.")
+    except Exception as exc:
+        raise RuntimeError(f"Qdrant store check failed: {exc}")
+
     bm25_path = Path(settings.bm25_store_path)
-    if bm25_path.exists():
-        bm25_store = BM25Store.load(str(bm25_path))
-    else:
-        bm25_store = BM25Store()
+    if not bm25_path.exists():
+        raise RuntimeError(f"BM25 store file not found at {bm25_path}. Run python ingest.py first.")
+    bm25_store = BM25Store.load(str(bm25_path))
+    docs = getattr(bm25_store, "_documents", getattr(bm25_store, "documents", []))
+    if len(docs) == 0:
+        raise RuntimeError(f"BM25 store at {bm25_path} is empty (0 docs). Run python ingest.py first.")
 
     hybrid = HybridRetriever(
         retrievers=[
@@ -196,7 +207,7 @@ def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
         return hybrid.search(query)
 
     def _rerank_search(query: str) -> list[Document]:
-        candidates = hybrid.search(query)
+        candidates = hybrid.search(query)[:10]
         return reranker.rerank(query, candidates, top_k=5)
 
     return {
@@ -231,7 +242,6 @@ def evaluate_llm_judge(
         response = llm.invoke(prompt)
         text = response.content if hasattr(response, "content") else str(response)
 
-        # Check abstention
         abstention_triggers = [
             "do not have enough information",
             "not mentioned",
@@ -246,7 +256,6 @@ def evaluate_llm_judge(
             faithfulness_score = 1.0 if abstained else 0.0
         else:
             abstention_score = 0.0 if abstained else 1.0
-            # Basic overlap verification with ground truth
             faithfulness_score = 1.0 if not abstained and len(text) > 10 else 0.0
 
         return {
@@ -268,37 +277,55 @@ def run_evaluation(
     cases = load_dataset(dataset_path)
 
     if mock_mode:
+        mode = "mock"
         retrievers = build_mock_retrievers()
     else:
+        mode = "live"
         try:
             retrievers = build_live_retrievers()
         except Exception as exc:
-            print(f"[INFO] Live infrastructure unavailable ({exc}). Falling back to mock evaluation.")
-            retrievers = build_mock_retrievers()
+            logger.error("Live infrastructure initialization failed: %s", exc)
+            sys.exit(
+                f"\n[ERROR] Live infrastructure unavailable: {exc}\n"
+                f"Cannot run real evaluation without live stores.\n"
+                f"1. Ingest documents first: python ingest.py\n"
+                f"2. Or if running offline/mock tests: python -m evals.rag.runner --mock\n"
+            )
 
     k_cutoffs = (1, 3, 5)
+    answerable_cases = [c for c in cases if not c.get("is_unanswerable", False)]
+    unanswerable_cases = [c for c in cases if c.get("is_unanswerable", False)]
+
     pipeline_scores: dict[str, dict[str, list[float]]] = {
-        name: {f"hit@{k}": [] for k in k_cutoffs} for name in retrievers
+        name: {
+            "hit@1": [],
+            "hit@3": [],
+            "hit@5": [],
+            "mrr": [],
+            "ndcg@5": [],
+            "latency": [],
+        }
+        for name in retrievers
     }
-    for name in retrievers:
-        pipeline_scores[name]["mrr"] = []
-        pipeline_scores[name]["ndcg@5"] = []
-        if use_judge:
+    if use_judge:
+        for name in retrievers:
             pipeline_scores[name]["faithfulness"] = []
             pipeline_scores[name]["abstention"] = []
 
     case_details = []
 
-    for case in cases:
+    for idx, case in enumerate(cases):
         query = case["query"]
         relevant_sources = case.get("relevant_sources", [])
         contains = case.get("contains", [])
         is_unanswerable = case.get("is_unanswerable", False)
+        print(f"[{idx+1}/{len(cases)}] Evaluating: {query[:60]}...", flush=True)
 
         case_record = {
             "id": case.get("id"),
             "category": case.get("category"),
             "query": query,
+            "is_unanswerable": is_unanswerable,
             "results": {},
         }
 
@@ -310,17 +337,21 @@ def run_evaluation(
                 logger.error("Pipeline '%s' failed on query: %s", name, e)
                 retrieved = []
             elapsed = time.perf_counter() - start_time
+            pipeline_scores[name]["latency"].append(elapsed)
 
-            metrics = evaluate_retrieval_case(
-                retrieved,
-                relevant_sources=relevant_sources,
-                contains=contains,
-                k_values=k_cutoffs,
-            )
-
-            for metric_name, val in metrics.items():
-                if metric_name in pipeline_scores[name]:
-                    pipeline_scores[name][metric_name].append(val)
+            # Compute retrieval metrics ONLY for answerable cases
+            if not is_unanswerable:
+                metrics = evaluate_retrieval_case(
+                    retrieved,
+                    relevant_sources=relevant_sources,
+                    contains=contains,
+                    k_values=k_cutoffs,
+                )
+                for metric_name, val in metrics.items():
+                    if metric_name in pipeline_scores[name]:
+                        pipeline_scores[name][metric_name].append(val)
+            else:
+                metrics = None
 
             case_perf = {
                 "metrics": metrics,
@@ -352,14 +383,18 @@ def run_evaluation(
 
     # Format Markdown Table
     table_lines = [
-        "| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 |"
+        f"| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 | Latency (s) |"
         + (" Faithfulness | Abstention |" if use_judge else ""),
-        "| :--- | :---: | :---: | :---: | :---: | :---: |"
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |"
         + (" :---: | :---: |" if use_judge else ""),
     ]
 
     for name, metrics in summary.items():
-        row = f"| **{name}** | {metrics.get('hit@1', 0.0):.3f} | {metrics.get('hit@3', 0.0):.3f} | {metrics.get('hit@5', 0.0):.3f} | {metrics.get('mrr', 0.0):.3f} | {metrics.get('ndcg@5', 0.0):.3f} |"
+        row = (
+            f"| **{name}** | {metrics.get('hit@1', 0.0):.3f} | {metrics.get('hit@3', 0.0):.3f} | "
+            f"{metrics.get('hit@5', 0.0):.3f} | {metrics.get('mrr', 0.0):.3f} | {metrics.get('ndcg@5', 0.0):.3f} | "
+            f"{metrics.get('latency', 0.0):.4f} |"
+        )
         if use_judge:
             row += f" {metrics.get('faithfulness', 0.0):.3f} | {metrics.get('abstention', 0.0):.3f} |"
         table_lines.append(row)
@@ -367,9 +402,12 @@ def run_evaluation(
     markdown_table = "\n".join(table_lines)
 
     report_payload = {
+        "mode": mode,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "dataset_path": str(dataset_path),
-        "num_cases": len(cases),
+        "total_cases": len(cases),
+        "answerable_cases": len(answerable_cases),
+        "unanswerable_cases": len(unanswerable_cases),
         "use_judge": use_judge,
         "summary": summary,
         "markdown_table": markdown_table,
@@ -380,11 +418,12 @@ def run_evaluation(
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report_payload, f, indent=2)
 
-    print("\n" + "=" * 70)
-    print("                RAG RETRIEVAL EVALUATION REPORT")
-    print("=" * 70 + "\n")
+    print("\n" + "=" * 76)
+    print(f"        RAG RETRIEVAL EVALUATION REPORT (Mode: {mode.upper()})")
+    print(f"        Evaluated on {len(answerable_cases)} answerable cases (and {len(unanswerable_cases)} unanswerable)")
+    print("=" * 76 + "\n")
     print(markdown_table)
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 76)
     print(f"Report written to: {output_path}\n")
 
     return report_payload
@@ -395,14 +434,14 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="evals/rag/rag_dataset.sample.jsonl",
+        default="evals/rag/rag_dataset.jsonl",
         help="Path to JSONL evaluation dataset",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="evals/results/rag_report.json",
-        help="Path for destination report JSON",
+        default=None,
+        help="Path for destination report JSON (defaults to rag_report.json or rag_report.mock.json)",
     )
     parser.add_argument(
         "--judge",
@@ -416,9 +455,15 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.output:
+        dest_path = Path(args.output)
+    else:
+        dest_path = Path("evals/results/rag_report.mock.json") if args.mock else Path("evals/results/rag_report.json")
+
     run_evaluation(
         dataset_path=Path(args.dataset),
-        output_path=Path(args.output),
+        output_path=dest_path,
         use_judge=args.judge,
         mock_mode=args.mock,
     )

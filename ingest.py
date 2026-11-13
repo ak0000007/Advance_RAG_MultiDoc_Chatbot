@@ -27,8 +27,9 @@ def generate_chunk_id(doc, chunk_idx: int, tenant_id: str = "default") -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest documents with deterministic IDs and tenant isolation.")
-    parser.add_argument("--data-dir", default="./data", help="Directory with documents to index")
+    parser.add_argument("--data-dir", default="./data/txt", help="Directory with documents to index")
     parser.add_argument("--tenant-id", default="default", help="Tenant ID for document isolation")
+    parser.add_argument("--recreate", action="store_true", help="Recreate indexes fresh instead of appending")
     args = parser.parse_args()
 
     print(f"Loading documents from {args.data_dir} for tenant '{args.tenant_id}'...")
@@ -72,7 +73,7 @@ def main():
 
     print(f"Indexing and persisting {len(chunks)} chunks in BM25Store...")
     bm25_path = Path(settings.bm25_store_path)
-    bm25_store = BM25Store.load(bm25_path) if bm25_path.exists() else BM25Store()
+    bm25_store = BM25Store() if args.recreate or not bm25_path.exists() else BM25Store.load(bm25_path)
     bm25_store.add_documents(chunks)
     bm25_store.save(bm25_path)
 

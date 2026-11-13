@@ -24,13 +24,39 @@ class QdrantStore:
         self.embeddings = embeddings
         self.collection_name = collection_name
 
-        # Remote Qdrant
+        # Remote Qdrant with local fallback
         if url:
-            self.vector_store = QdrantVectorStore.construct_instance(
-                embedding=embeddings,
-                collection_name=collection_name,
-                client_options={"url": url, "api_key": api_key},
-            )
+            use_remote = False
+            try:
+                import socket
+                from urllib.parse import urlparse
+                p = urlparse(url)
+                host = p.hostname or "localhost"
+                port = p.port or (443 if p.scheme == "https" else 80)
+                sock = socket.create_connection((host, port), timeout=0.5)
+                sock.close()
+                use_remote = True
+            except Exception:
+                use_remote = False
+
+            if use_remote:
+                try:
+                    self.vector_store = QdrantVectorStore.construct_instance(
+                        embedding=embeddings,
+                        collection_name=collection_name,
+                        client_options={"url": url, "api_key": api_key, "timeout": 2.0},
+                    )
+                    self.vector_store.client.get_collections()
+                except Exception:
+                    use_remote = False
+
+            if not use_remote:
+                fallback_path = path or "./qdrant_data"
+                self.vector_store = QdrantVectorStore.construct_instance(
+                    embedding=embeddings,
+                    collection_name=collection_name,
+                    client_options={"path": fallback_path},
+                )
 
         # Local persistent Qdrant
         elif path:
@@ -77,9 +103,13 @@ class QdrantStore:
         """
         from langchain_core.runnables import RunnableLambda
 
-        def _retrieve(inputs: dict):
-            question = inputs.get("question", "")
-            metadata_filter = inputs.get("metadata_filter", None)
+        def _retrieve(inputs: dict | str):
+            if isinstance(inputs, str):
+                question = inputs
+                metadata_filter = None
+            else:
+                question = inputs.get("question", "")
+                metadata_filter = inputs.get("metadata_filter", None)
             
             # Delegate to the Qdrant-specific retriever builder
             retriever = self.as_retriever(

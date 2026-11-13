@@ -227,9 +227,13 @@ class BM25Store:
 
         k = (base_search_kwargs or {}).get("k", 20)
 
-        def _retrieve(inputs: dict) -> list[Document]:
-            question = inputs.get("question", "")
-            metadata_filter = inputs.get("metadata_filter", None)
+        def _retrieve(inputs: dict | str) -> list[Document]:
+            if isinstance(inputs, str):
+                question = inputs
+                metadata_filter = None
+            else:
+                question = inputs.get("question", "")
+                metadata_filter = inputs.get("metadata_filter", None)
             return self.search(
                 query=question, k=k, metadata_filter=metadata_filter
             )
