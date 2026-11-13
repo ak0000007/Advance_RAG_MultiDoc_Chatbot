@@ -21,12 +21,17 @@ def build_document_search_tool(
     rewriter_chain,
     max_attempts: int,
     irrelevance_threshold: float = 0.8,
+    access_resolver: Optional[Any] = None,
+    reranker: Optional[Any] = None,
+    base_retriever: Optional[Any] = None,
+    k: int = 5,
+    overfetch_factor: int = 4,
 ):
     """
     Create a LangChain Tool backed by the project's
     existing hybrid + reranking retriever.
     Includes parallel per-chunk grading, filtering, self-correcting retrieval logic,
-    and tenant metadata isolation.
+    tenant metadata isolation, and Salesforce record-level access filtering.
     """
 
     @tool
@@ -42,34 +47,119 @@ def build_document_search_tool(
         """
         current_query = query
 
-        # Resolve tenant/user metadata filter from execution context
+        # Resolve tenant/user metadata filter and SF auth context
         conf = (
             config.get("configurable", {})
             if isinstance(config, dict)
             else (getattr(config, "configurable", {}) or {})
         )
         tenant_id = conf.get("tenant_id")
+        sf_auth_active = bool(conf.get("sf_auth_active", False))
+        sf_user_id = conf.get("sf_user_id")
+        sf_role = conf.get("sf_role")
+        sf_org_id = conf.get("sf_org_id", "default")
+        trace_id = conf.get("trace_id")
+
         raw_filter = conf.get("metadata_filter")
         metadata_filter = dict(raw_filter) if isinstance(raw_filter, dict) else {}
-        if tenant_id and "tenant_id" not in metadata_filter:
-            metadata_filter["tenant_id"] = str(tenant_id)
+
+        if sf_auth_active:
+            metadata_filter["sf_auth_active"] = True
+            if tenant_id:
+                metadata_filter["tenant_id"] = str(tenant_id)
+            if sf_role:
+                metadata_filter["sf_role"] = str(sf_role)
+            if sf_user_id:
+                metadata_filter["sf_user_id"] = str(sf_user_id)
+        else:
+            if tenant_id and "tenant_id" not in metadata_filter:
+                metadata_filter["tenant_id"] = str(tenant_id)
 
         active_filter = metadata_filter if metadata_filter else None
         parser = PydanticOutputParser(pydantic_object=ChunkGrade)
 
-        for attempt in range(1, max_attempts + 1):
-            documents = await retriever.ainvoke(
-                {
-                    "question": current_query,
-                    "metadata_filter": active_filter,
-                }
-            )
+        active_base = base_retriever or getattr(retriever, "base_retriever", retriever)
 
-            if not documents:
-                return (
-                    "No relevant documents were found "
-                    "for this query."
+        async def _filter_by_sf_access(candidates: list[Any]) -> list[Any]:
+            surviving = []
+            account_docs = []
+            for doc in candidates:
+                meta = getattr(doc, "metadata", {}) or {}
+                scope = meta.get("sf_scope")
+                if scope == "none":
+                    continue
+                elif scope == "org":
+                    surviving.append(doc)
+                else:
+                    aid = meta.get("sf_account_id")
+                    if aid:
+                        account_docs.append((doc, aid))
+
+            if account_docs:
+                distinct_accounts = {aid for _, aid in account_docs}
+                readable = await access_resolver.readable_accounts(
+                    user_id=sf_user_id,
+                    account_ids=distinct_accounts,
+                    org_id=sf_org_id,
+                    trace_id=trace_id,
                 )
+                for doc, aid in account_docs:
+                    if aid in readable:
+                        surviving.append(doc)
+
+            return surviving
+
+        for attempt in range(1, max_attempts + 1):
+            if sf_auth_active and access_resolver:
+                # 1. Over-fetch candidates with factor (k * overfetch_factor)
+                initial_k = k * overfetch_factor
+                raw_candidates = await active_base.ainvoke(
+                    {
+                        "question": current_query,
+                        "metadata_filter": active_filter,
+                        "k": initial_k,
+                    }
+                )
+                surviving = await _filter_by_sf_access(raw_candidates)
+
+                # 2. If fewer than k remain, widen once (fetch k * 8) before giving up
+                if len(surviving) < k:
+                    widen_k = k * overfetch_factor * 2
+                    wider_candidates = await active_base.ainvoke(
+                        {
+                            "question": current_query,
+                            "metadata_filter": active_filter,
+                            "k": widen_k,
+                        }
+                    )
+                    surviving = await _filter_by_sf_access(wider_candidates)
+
+                # 3. Rerank surviving documents to top k
+                if surviving:
+                    if reranker and hasattr(reranker, "arerank"):
+                        documents = await reranker.arerank(current_query, surviving, top_k=k)
+                    elif reranker and hasattr(reranker, "rerank"):
+                        documents = await asyncio.to_thread(reranker.rerank, current_query, surviving, top_k=k)
+                    else:
+                        documents = surviving[:k]
+                else:
+                    documents = []
+
+                # 4. If zero chunks survive, return neutral message without leaking
+                if not documents:
+                    return "No accessible documents found for this query."
+            else:
+                documents = await retriever.ainvoke(
+                    {
+                        "question": current_query,
+                        "metadata_filter": active_filter,
+                    }
+                )
+                if not documents:
+                    return (
+                        "No relevant documents were found "
+                        "for this query."
+                    )
 
             # Grade each chunk in parallel using asyncio.gather
             async def _grade_single_chunk(document, idx: int):

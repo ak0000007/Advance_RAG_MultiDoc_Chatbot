@@ -187,11 +187,32 @@ class BM25Store:
             # Apply metadata filter
             if metadata_filter:
                 doc_meta = self._documents[idx].metadata
-                if not all(
-                    doc_meta.get(key) == value
-                    for key, value in metadata_filter.items()
-                ):
-                    continue
+                if metadata_filter.get("sf_auth_active"):
+                    # 1. Tenant pre-filter
+                    req_tenant = metadata_filter.get("tenant_id")
+                    if req_tenant and doc_meta.get("tenant_id") != req_tenant:
+                        continue
+
+                    # 2. Scope & role pre-filter:
+                    # - org scope: visible to all users in tenant
+                    # - none scope: invisible to all users
+                    # - account scope: must match allowed_roles
+                    scope = doc_meta.get("sf_scope")
+                    if scope == "none":
+                        continue
+                    elif scope == "org":
+                        pass
+                    else:
+                        sf_role = metadata_filter.get("sf_role")
+                        allowed_roles = doc_meta.get("allowed_roles") or []
+                        if not sf_role or sf_role not in allowed_roles:
+                            continue
+                else:
+                    if not all(
+                        doc_meta.get(key) == value
+                        for key, value in metadata_filter.items()
+                    ):
+                        continue
             s = self._score(query_tokens, idx)
             if s > 0:
                 scored.append((s, idx))
@@ -225,15 +246,17 @@ class BM25Store:
         """
         from langchain_core.runnables import RunnableLambda
 
-        k = (base_search_kwargs or {}).get("k", 20)
+        default_k = (base_search_kwargs or {}).get("k", 20)
 
         def _retrieve(inputs: dict | str) -> list[Document]:
             if isinstance(inputs, str):
                 question = inputs
                 metadata_filter = None
+                k = default_k
             else:
                 question = inputs.get("question", "")
                 metadata_filter = inputs.get("metadata_filter", None)
+                k = inputs.get("k", default_k)
             return self.search(
                 query=question, k=k, metadata_filter=metadata_filter
             )

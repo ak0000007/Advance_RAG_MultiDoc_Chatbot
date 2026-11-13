@@ -8,8 +8,11 @@ OCP: add new routers in new files, include them in app.py.
 import json
 import re
 import secrets
+import time
 import uuid
+from pathlib import Path
 from typing import Optional
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
@@ -33,20 +36,174 @@ router = APIRouter()
 security_bearer = HTTPBearer(auto_error=False)
 security_api_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+# In-memory JTI replay store: maps jti -> exp (unix timestamp)
+# Production note: In multi-worker deployments, replace with distributed Redis store (SET key 1 EX lifetime NX).
+_seen_jtis: dict[str, float] = {}
+
+
+def _get_sf_jwt_public_key() -> str:
+    """Load the configured RS256 public key (direct string or file path)."""
+    if settings.sf_jwt_public_key:
+        val = (
+            settings.sf_jwt_public_key.get_secret_value()
+            if hasattr(settings.sf_jwt_public_key, "get_secret_value")
+            else str(settings.sf_jwt_public_key)
+        )
+        if val.strip():
+            return val.strip()
+
+    if settings.sf_jwt_public_key_path:
+        p = Path(settings.sf_jwt_public_key_path)
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip()
+
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Salesforce JWT public key is not configured.",
+    )
+
+
+def _check_and_store_jti(jti: str, exp: float) -> bool:
+    """
+    Check if JTI has already been seen. Returns False if replayed, True if new.
+    Evicts expired JTIs lazily.
+    """
+    now = time.time()
+    if len(_seen_jtis) > 1000:
+        expired = [k for k, v in _seen_jtis.items() if v <= now]
+        for k in expired:
+            _seen_jtis.pop(k, None)
+
+    if jti in _seen_jtis:
+        return False
+    _seen_jtis[jti] = exp
+    return True
+
 
 class AuthUser(str):
     """
-    Authenticated user wrapper carrying username and tenant_id context.
+    Authenticated user wrapper carrying username, tenant_id, and Salesforce context.
     Inherits from str so existing string consumers continue to function seamlessly.
     """
     username: str
     tenant_id: str
+    sf_user_id: Optional[str]
+    sf_role: Optional[str]
+    sf_org_id: Optional[str]
 
-    def __new__(cls, username: str, tenant_id: str = "default"):
+    def __new__(
+        cls,
+        username: str,
+        tenant_id: str = "default",
+        sf_user_id: Optional[str] = None,
+        sf_role: Optional[str] = None,
+        sf_org_id: Optional[str] = None,
+    ):
         obj = super().__new__(cls, username)
         obj.username = username
         obj.tenant_id = tenant_id
+        obj.sf_user_id = sf_user_id
+        obj.sf_role = sf_role
+        obj.sf_org_id = sf_org_id
         return obj
+
+
+def _verify_salesforce_jwt(token: str) -> AuthUser:
+    """
+    Verify short-lived signed RS256 JWT for Salesforce user identity.
+    Enforces issuer, audience, max lifetime <= 120s, clock skew <= 30s,
+    and in-memory JTI replay protection.
+    """
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Reject alg=none or symmetric algs immediately if header specifies them
+    try:
+        unverified_headers = jwt.get_unverified_header(token)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Malformed JWT header.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    alg = unverified_headers.get("alg")
+    if alg != "RS256":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid algorithm '{alg}'. Only RS256 is permitted.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    public_key = _get_sf_jwt_public_key()
+
+    try:
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            audience=settings.sf_jwt_audience or None,
+            issuer=settings.sf_jwt_issuer or None,
+            leeway=30,  # <= 30s clock skew
+            options={
+                "require": ["exp", "iat", "jti", "iss", "aud"],
+                "verify_exp": True,
+                "verify_iat": True,
+                "verify_aud": bool(settings.sf_jwt_audience),
+                "verify_iss": bool(settings.sf_jwt_issuer),
+            },
+        )
+    except jwt.PyJWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid JWT: {exc}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Enforce maximum lifetime (exp - iat) <= max allowed lifetime (default 120s)
+    exp = payload.get("exp")
+    iat = payload.get("iat")
+    if exp is None or iat is None or (exp - iat) > settings.sf_jwt_max_lifetime_seconds:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token lifetime exceeds maximum allowed ({settings.sf_jwt_max_lifetime_seconds}s).",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Missing sf_user_id check
+    sf_user_id = payload.get("sf_user_id")
+    if not sf_user_id or not str(sf_user_id).strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing required 'sf_user_id' claim.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Replay protection on jti
+    jti = payload.get("jti")
+    if not jti or not _check_and_store_jti(str(jti), float(exp)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token replay detected or invalid jti.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    username = str(sf_user_id)
+    tenant_id = str(payload.get("tenant_id") or "default")
+    sf_role = str(payload.get("sf_role") or "") if payload.get("sf_role") is not None else None
+    sf_org_id = str(payload.get("sf_org_id") or "") if payload.get("sf_org_id") is not None else None
+
+    return AuthUser(
+        username=username,
+        tenant_id=tenant_id,
+        sf_user_id=str(sf_user_id),
+        sf_role=sf_role,
+        sf_org_id=sf_org_id,
+    )
 
 
 def _verify_auth_and_get_user(
@@ -55,13 +212,23 @@ def _verify_auth_and_get_user(
 ) -> Optional[AuthUser]:
     """
     Enforce API authentication, constant-time token comparison, and user/tenant mapping.
-    Resolves authenticated user identity and tenant context.
+    When SF_AUTH_ENABLED=true, verifies RS256 Salesforce JWT and returns AuthUser with SF context.
+    When SF_AUTH_ENABLED=false, follows existing API-key / secret auth rules.
     """
     token = None
     if isinstance(auth_bearer, HTTPAuthorizationCredentials):
         token = auth_bearer.credentials
     elif isinstance(api_key, str):
         token = api_key
+
+    if getattr(settings, "sf_auth_enabled", False) is True:
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required. Please provide a valid Bearer JWT.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return _verify_salesforce_jwt(token)
 
     # 1. Check api_key_mapping first (maps specific tokens to {username, tenant_id})
     if settings.api_key_mapping and token:
@@ -106,6 +273,10 @@ def _build_config(
     trace_id: str | None = None,
     endpoint: str = "chat",
     tenant_id: str | None = None,
+    sf_user_id: str | None = None,
+    sf_role: str | None = None,
+    sf_org_id: str | None = None,
+    sf_auth_active: bool = False,
 ) -> dict:
     tid = trace_id or generate_trace_id()
     metadata = {
@@ -117,6 +288,14 @@ def _build_config(
         metadata["sf_username"] = sf_username
     if tenant_id:
         metadata["tenant_id"] = tenant_id
+    if sf_user_id:
+        metadata["sf_user_id"] = sf_user_id
+    if sf_role:
+        metadata["sf_role"] = sf_role
+    if sf_org_id:
+        metadata["sf_org_id"] = sf_org_id
+    if sf_auth_active:
+        metadata["sf_auth_active"] = True
 
     tags = ["advance-rag", "langgraph", endpoint]
     callbacks = get_tracer_callbacks(
@@ -135,6 +314,14 @@ def _build_config(
         configurable["sf_username"] = sf_username
     if tenant_id:
         configurable["tenant_id"] = tenant_id
+    if sf_user_id:
+        configurable["sf_user_id"] = sf_user_id
+    if sf_role:
+        configurable["sf_role"] = sf_role
+    if sf_org_id:
+        configurable["sf_org_id"] = sf_org_id
+    if sf_auth_active:
+        configurable["sf_auth_active"] = True
 
     return {
         "configurable": configurable,
@@ -169,17 +356,35 @@ def _prepare_chat_context(
 
     messages.append(HumanMessage(content=request.question))
 
-    # Resolve sf_username: authenticated server context takes precedence
-    raw_username = auth_user or request.sf_username
-    sf_username = None
-    if raw_username:
-        sf_username = re.sub(r"[\x00-\x1f\x7f]", "", str(raw_username)).strip()[:100]
+    sf_user_id = getattr(auth_user, "sf_user_id", None)
+    sf_role = getattr(auth_user, "sf_role", None)
+    sf_org_id = getattr(auth_user, "sf_org_id", None)
+    sf_auth_active = (getattr(settings, "sf_auth_enabled", False) is True) or bool(sf_user_id)
 
-    tenant_id = getattr(auth_user, "tenant_id", None) or "default"
+    if sf_auth_active:
+        # Security invariant: NEVER read user/tenant identity from body when SF auth is active
+        sf_username = getattr(auth_user, "username", None) or (str(auth_user) if auth_user else None)
+        tenant_id = getattr(auth_user, "tenant_id", "default")
+    else:
+        # Backward-compatible resolution: server auth takes precedence, body fallback
+        raw_username = auth_user or request.sf_username
+        sf_username = None
+        if raw_username:
+            sf_username = re.sub(r"[\x00-\x1f\x7f]", "", str(raw_username)).strip()[:100]
+        tenant_id = getattr(auth_user, "tenant_id", None) or "default"
 
     thread_id = request.thread_id or str(uuid.uuid4())
     trace_id = getattr(request, "trace_id", None) or generate_trace_id()
-    config = _build_config(thread_id, sf_username, trace_id=trace_id, tenant_id=tenant_id)
+    config = _build_config(
+        thread_id,
+        sf_username,
+        trace_id=trace_id,
+        tenant_id=tenant_id,
+        sf_user_id=sf_user_id,
+        sf_role=sf_role,
+        sf_org_id=sf_org_id,
+        sf_auth_active=sf_auth_active,
+    )
     inputs = {
         "question": request.question,
         "messages": messages,
@@ -188,6 +393,12 @@ def _prepare_chat_context(
     }
     if sf_username:
         inputs["sf_username"] = sf_username
+    if sf_user_id:
+        inputs["sf_user_id"] = sf_user_id
+    if sf_role:
+        inputs["sf_role"] = sf_role
+    if sf_org_id:
+        inputs["sf_org_id"] = sf_org_id
 
     return inputs, config, thread_id
 
@@ -444,18 +655,39 @@ async def resume_chat(
         snapshot.values.get("sf_username")
         if snapshot.values
         else None
-    ) or auth_user
+    ) or (getattr(auth_user, "username", None) if auth_user else None) or auth_user
     thread_tenant_id = (
         snapshot.values.get("tenant_id")
         if snapshot.values
         else None
     ) or getattr(auth_user, "tenant_id", "default")
+    thread_sf_user_id = (
+        snapshot.values.get("sf_user_id")
+        if snapshot.values
+        else None
+    ) or getattr(auth_user, "sf_user_id", None)
+    thread_sf_role = (
+        snapshot.values.get("sf_role")
+        if snapshot.values
+        else None
+    ) or getattr(auth_user, "sf_role", None)
+    thread_sf_org_id = (
+        snapshot.values.get("sf_org_id")
+        if snapshot.values
+        else None
+    ) or getattr(auth_user, "sf_org_id", None)
+    sf_auth_active = bool(settings.sf_auth_enabled or thread_sf_user_id)
+
     config = _build_config(
         request.thread_id,
         thread_sf_username,
         trace_id=trace_id,
         endpoint="resume",
         tenant_id=thread_tenant_id,
+        sf_user_id=thread_sf_user_id,
+        sf_role=thread_sf_role,
+        sf_org_id=thread_sf_org_id,
+        sf_auth_active=sf_auth_active,
     )
 
     return await _run_and_respond(
@@ -489,18 +721,39 @@ async def resume_chat_stream(
         snapshot.values.get("sf_username")
         if snapshot.values
         else None
-    ) or auth_user
+    ) or (getattr(auth_user, "username", None) if auth_user else None) or auth_user
     thread_tenant_id = (
         snapshot.values.get("tenant_id")
         if snapshot.values
         else None
     ) or getattr(auth_user, "tenant_id", "default")
+    thread_sf_user_id = (
+        snapshot.values.get("sf_user_id")
+        if snapshot.values
+        else None
+    ) or getattr(auth_user, "sf_user_id", None)
+    thread_sf_role = (
+        snapshot.values.get("sf_role")
+        if snapshot.values
+        else None
+    ) or getattr(auth_user, "sf_role", None)
+    thread_sf_org_id = (
+        snapshot.values.get("sf_org_id")
+        if snapshot.values
+        else None
+    ) or getattr(auth_user, "sf_org_id", None)
+    sf_auth_active = bool(settings.sf_auth_enabled or thread_sf_user_id)
+
     config = _build_config(
         request.thread_id,
         thread_sf_username,
         trace_id=trace_id,
         endpoint="resume_stream",
         tenant_id=thread_tenant_id,
+        sf_user_id=thread_sf_user_id,
+        sf_role=thread_sf_role,
+        sf_org_id=thread_sf_org_id,
+        sf_auth_active=sf_auth_active,
     )
 
     inputs = Command(resume=request.decision)

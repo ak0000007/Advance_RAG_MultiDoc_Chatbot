@@ -141,6 +141,8 @@ class MockSalesforceAsyncClient:
         self.bookings: list[dict[str, Any]] = copy.deepcopy(_DEFAULT_BOOKINGS)
         self.packages: list[dict[str, Any]] = copy.deepcopy(_DEFAULT_PACKAGES)
         self.payments: list[dict[str, Any]] = copy.deepcopy(_DEFAULT_PAYMENTS)
+        self.user_record_access: dict[tuple[str, str], bool] = {}
+        self.simulate_record_access_exception: Optional[Exception] = None
         self.call_history.clear()
         self.mutation_history.clear()
 
@@ -387,3 +389,29 @@ class MockSalesforceAsyncClient:
             "statusCode": 404,
             "message": f"Payment ID '{payment_id}' not found.",
         }
+
+    # ── Record-Level Access Operations ────────────────────────────────────────
+
+    def grant_record_access(
+        self, user_id: str, record_id: str, has_access: bool = True
+    ) -> None:
+        self.user_record_access[(user_id, record_id)] = has_access
+
+    async def check_user_record_access(
+        self,
+        user_id: str,
+        record_ids: list[str],
+    ) -> dict[str, bool]:
+        self.call_history.append({
+            "method": "check_user_record_access",
+            "user_id": user_id,
+            "record_ids": list(record_ids),
+        })
+        if self.simulate_record_access_exception:
+            raise self.simulate_record_access_exception
+
+        result = {}
+        for rid in record_ids:
+            result[rid] = self.user_record_access.get((user_id, rid), False)
+        return result
+

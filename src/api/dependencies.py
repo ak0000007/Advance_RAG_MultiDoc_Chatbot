@@ -125,16 +125,31 @@ def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, ch
     grader_chain = build_chunk_grader(retrieval_grader_llm)
     rewriter_chain = build_corrective_rewriter(llm)
 
-    qdrant_tool = build_document_search_tool(
-        retriever,
-        grader_chain,
-        rewriter_chain,
-        settings.max_retrieval_attempts,
-        irrelevance_threshold=settings.crag_retry_irrelevance_threshold,
-    )
-
     if sf_client is _DEFAULT_CLIENT:
         sf_client = get_salesforce_client()
+
+    access_resolver = None
+    if sf_client:
+        from src.security.sf_access import AccessResolver
+        access_resolver = AccessResolver(
+            salesforce_client=sf_client,
+            cache_ttl_seconds=settings.sf_access_cache_ttl_seconds,
+        )
+
+    base_retriever = hybrid.as_dynamic_retriever()
+
+    qdrant_tool = build_document_search_tool(
+        retriever=retriever,
+        grader_llm=grader_chain,
+        rewriter_chain=rewriter_chain,
+        max_attempts=settings.max_retrieval_attempts,
+        irrelevance_threshold=settings.crag_retry_irrelevance_threshold,
+        access_resolver=access_resolver,
+        reranker=reranker,
+        base_retriever=base_retriever,
+        k=5,
+        overfetch_factor=settings.sf_access_overfetch_factor,
+    )
 
     if pool is _DEFAULT_POOL:
         if settings.postgres_url:

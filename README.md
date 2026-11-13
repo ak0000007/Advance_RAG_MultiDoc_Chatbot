@@ -74,6 +74,24 @@ Before any mutating Salesforce tool issues an approval request or API call, it p
 ### 3. API Authentication
 Endpoints `/chat` and `/chat/resume` support standard HTTP Bearer token and `X-API-Key` headers configured via `API_SECRET_KEY`. When enabled, requests lacking valid credentials return `401 Unauthorized`. In local development without configured keys, requests run in permissive dev mode.
 
+### 4. Record-Level Access Control (Salesforce Permission-Aware RAG)
+When `SF_AUTH_ENABLED=true`, retrieval enforces Salesforce Account-level access control:
+- **Chunk Metadata Tagging**: At ingestion via `--sf-manifest <PATH>` (JSON/CSV), every chunk is tagged with `sf_account_id` (normalized 18-char), `allowed_roles`, and `sf_scope` (`"account"`, `"org"`, or `"none"`). Untagged files default to `sf_scope="none"` and fail closed.
+- **Short-Lived Signed JWT**: Identity is authenticated via RS256-signed JWTs (`iss`, `aud`, `exp`, `iat`, `jti`, `sf_user_id`, `sf_role`, `sf_org_id`, `tenant_id`). The system rejects `alg=none`, symmetric algorithms, expired tokens, tokens with lifetime > 120s, and replayed `jti`s.
+- **Permission Filtering Strategy**:
+  1. *Static Pre-Filter*: Qdrant and BM25 filter candidates by `tenant_id` AND (`sf_scope == "org"` OR `allowed_roles` contains caller's `sf_role`).
+  2. *Over-Fetch & Access Resolution*: Candidates are over-fetched ($k \times 4$); distinct Account IDs are checked against Salesforce `UserRecordAccess` (`SELECT RecordId, HasReadAccess FROM UserRecordAccess`).
+  3. *Widening*: If fewer than $k$ candidates survive, the search widens once to $k \times 8$ before final reranking.
+  4. *Fail-Closed & Leak Prevention*: Inaccessible chunks are dropped before grading or rewriting; if zero chunks survive, the tool returns a neutral "No accessible documents found" without leaking the existence of restricted documents.
+- **Caching**: Access resolution results are cached in-memory per `(sf_org_id, user_id, account_id)` with configurable TTL (default 60s via `SF_ACCESS_CACHE_TTL_SECONDS`) and bounded LRU eviction (10,000 entries).
+
+---
+
+## Known Limitations
+- **Salesforce Sharing Complexity**: Record access is evaluated directly via Salesforce `UserRecordAccess` for explicit Account read grants. Deep implicit sharing hierarchies depend on what `UserRecordAccess` reports.
+- **In-Memory JTI Replay Cache**: The JTI replay protection set is kept in process memory. Multi-worker or distributed deployments require an external distributed key-value store (such as Redis) with atomic `SETNX` and TTL.
+- **60-Second Revocation Delay**: Account permissions are cached for `SF_ACCESS_CACHE_TTL_SECONDS` (default: 60s) to balance SOQL query limits with responsiveness. Permissions revoked in Salesforce take up to 60 seconds to reflect in retrieval.
+
 ---
 
 ## Repository Map

@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     sf_private_key_path: str | None = None
     sf_domain: str = "https://your-domain.my.salesforce.com"
 
+    # Salesforce Record-Level Access Control & Short-Lived User JWT Auth
+    sf_auth_enabled: bool = False
+    sf_jwt_public_key: SecretStr | None = None
+    sf_jwt_public_key_path: str | None = None
+    sf_jwt_audience: str = "advance-rag-travel-copilot"
+    sf_jwt_issuer: str = "https://login.salesforce.com"
+    sf_jwt_max_lifetime_seconds: int = 120
+    sf_access_cache_ttl_seconds: int = 60
+    sf_access_overfetch_factor: int = 4
+
     # API Authentication & Security
     api_secret_key: SecretStr | None = None
     sf_default_username: str | None = None
@@ -62,7 +72,7 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "advance-rag-chatbot"
 
-    @field_validator("langsmith_tracing", "langfuse_enabled", "otel_enabled", "mock_salesforce", mode="before")
+    @field_validator("langsmith_tracing", "langfuse_enabled", "otel_enabled", "mock_salesforce", "sf_auth_enabled", mode="before")
     @classmethod
     def parse_bool_env(cls, v):
         if isinstance(v, str):

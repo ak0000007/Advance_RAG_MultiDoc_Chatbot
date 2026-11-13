@@ -147,6 +147,16 @@ class CrossEncoderReranker:
 
         return results
 
+    async def arerank(
+        self,
+        query: str,
+        documents: list[Document],
+        top_k: int = 5,
+    ) -> list[Document]:
+        """Asynchronous wrapper for rerank, ensuring model is loaded safely."""
+        await self._load_model_async()
+        return await asyncio.to_thread(self.rerank, query, documents, top_k=top_k)
+
     # ------------------------------------------------------------------
     # LangChain integration
     # ------------------------------------------------------------------
@@ -284,4 +294,6 @@ class CrossEncoderReranker:
             )
             return await asyncio.to_thread(self.rerank, question, docs, top_k=top_k)
 
-        return RunnableLambda(func=_retrieve_and_rerank, afunc=_async_retrieve_and_rerank)
+        wrapped = RunnableLambda(func=_retrieve_and_rerank, afunc=_async_retrieve_and_rerank)
+        wrapped.base_retriever = retriever_runnable
+        return wrapped

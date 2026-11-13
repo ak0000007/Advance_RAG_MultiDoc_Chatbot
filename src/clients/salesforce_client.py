@@ -391,3 +391,43 @@ class SalesforceAsyncClient:
         if resp.status_code >= 500:
             resp.raise_for_status()
         return _parse_api_response(resp)
+
+    async def check_user_record_access(
+        self,
+        user_id: str,
+        record_ids: list[str],
+        auth_username: Optional[str] = None,
+    ) -> dict[str, bool]:
+        """
+        Query Salesforce UserRecordAccess to determine read permissions on a list of record IDs.
+        Returns a mapping: record_id -> has_read_access (bool).
+        """
+        if not record_ids or not user_id:
+            return {}
+
+        safe_ids = [re.sub(r'[^a-zA-Z0-9]', '', rid) for rid in record_ids if rid]
+        if not safe_ids:
+            return {}
+
+        formatted_ids = ",".join(f"'{rid}'" for rid in safe_ids)
+        safe_user_id = re.sub(r'[^a-zA-Z0-9]', '', user_id)
+        soql = f"SELECT RecordId, HasReadAccess FROM UserRecordAccess WHERE UserId = '{safe_user_id}' AND RecordId IN ({formatted_ids})"
+
+        uname = auth_username or "default_user"
+        token = await self.get_access_token(uname)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self.domain.rstrip('/')}/services/data/v60.0/query/?q={soql}"
+        resp = await self._request_with_retry("get", url, headers=headers)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Salesforce UserRecordAccess query failed HTTP {resp.status_code}: {resp.text}")
+
+        data = resp.json()
+        records = data.get("records", []) if isinstance(data, dict) else []
+        result = {rid: False for rid in safe_ids}
+        for r in records:
+            if "RecordId" in r:
+                result[r["RecordId"]] = bool(r.get("HasReadAccess", False))
+        return result

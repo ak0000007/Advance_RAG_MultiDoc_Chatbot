@@ -78,19 +78,58 @@ class QdrantStore:
     ):
         """
         Return a LangChain retriever.
-        Optional metadata_filter applies exact match filtering on document metadata.
+        Optional metadata_filter applies exact match filtering or permission-aware filtering on document metadata.
         """
         kwargs = search_kwargs.copy() if search_kwargs else {"k": 4}
 
         if metadata_filter:
-            must_conditions = [
-                models.FieldCondition(
-                    key=f"metadata.{key}",
-                    match=models.MatchValue(value=value)
+            if metadata_filter.get("sf_auth_active"):
+                must_conditions = []
+                tenant_id = metadata_filter.get("tenant_id")
+                if tenant_id:
+                    must_conditions.append(
+                        models.FieldCondition(
+                            key="metadata.tenant_id",
+                            match=models.MatchValue(value=tenant_id),
+                        )
+                    )
+
+                should_conditions = [
+                    models.FieldCondition(
+                        key="metadata.sf_scope",
+                        match=models.MatchValue(value="org"),
+                    )
+                ]
+                sf_role = metadata_filter.get("sf_role")
+                if sf_role:
+                    should_conditions.append(
+                        models.FieldCondition(
+                            key="metadata.allowed_roles",
+                            match=models.MatchValue(value=sf_role),
+                        )
+                    )
+
+                must_not_conditions = [
+                    models.FieldCondition(
+                        key="metadata.sf_scope",
+                        match=models.MatchValue(value="none"),
+                    )
+                ]
+
+                kwargs["filter"] = models.Filter(
+                    must=must_conditions,
+                    should=should_conditions,
+                    must_not=must_not_conditions,
                 )
-                for key, value in metadata_filter.items()
-            ]
-            kwargs["filter"] = models.Filter(must=must_conditions)
+            else:
+                must_conditions = [
+                    models.FieldCondition(
+                        key=f"metadata.{key}",
+                        match=models.MatchValue(value=value)
+                    )
+                    for key, value in metadata_filter.items()
+                ]
+                kwargs["filter"] = models.Filter(must=must_conditions)
 
         return self.vector_store.as_retriever(
             search_kwargs=kwargs
@@ -107,13 +146,17 @@ class QdrantStore:
             if isinstance(inputs, str):
                 question = inputs
                 metadata_filter = None
+                search_kwargs = base_search_kwargs
             else:
                 question = inputs.get("question", "")
                 metadata_filter = inputs.get("metadata_filter", None)
+                search_kwargs = dict(base_search_kwargs) if base_search_kwargs else {}
+                if "k" in inputs:
+                    search_kwargs["k"] = inputs["k"]
             
             # Delegate to the Qdrant-specific retriever builder
             retriever = self.as_retriever(
-                search_kwargs=base_search_kwargs, 
+                search_kwargs=search_kwargs, 
                 metadata_filter=metadata_filter
             )
             return retriever.invoke(question)

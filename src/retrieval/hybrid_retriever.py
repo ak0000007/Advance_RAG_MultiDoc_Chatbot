@@ -141,14 +141,16 @@ class HybridRetriever:
                 all_results = list(executor.map(lambda r: self._invoke_retriever_sync(r, query), self.retrievers))
 
         fused = reciprocal_rank_fusion(all_results, k=self.rrf_k)
-        return fused[: self.final_k]
+        limit = query.get("k", self.final_k) if isinstance(query, dict) else self.final_k
+        return fused[:limit]
 
     async def asearch(self, query: str | dict) -> list[Document]:
         """Run all retrievers concurrently via asyncio.gather, fuse results via RRF."""
         tasks = [self._invoke_retriever_async(r, query) for r in self.retrievers]
         all_results = await asyncio.gather(*tasks)
         fused = reciprocal_rank_fusion(list(all_results), k=self.rrf_k)
-        return fused[: self.final_k]
+        limit = query.get("k", self.final_k) if isinstance(query, dict) else self.final_k
+        return fused[:limit]
 
     # ------------------------------------------------------------------
     # LangChain integration — same interface as QdrantStore / BM25Store
