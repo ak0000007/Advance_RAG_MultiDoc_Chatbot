@@ -58,8 +58,8 @@ scratch/
 .github/context-mode/
 function-documentation-and-file-manager/
 
-# Generated HTML documentation
+# Generated HTML documentation (kept locally on system, never committed to git)
 docs/*.html
 *.html
-!Explaination/*.html
+Explaination/*.html
 
