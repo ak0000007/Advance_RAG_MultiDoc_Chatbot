@@ -207,3 +207,144 @@ def extract_citations_from_messages(
                     all_citations.append(citation)
 
     return all_citations
+
+
+# ==============================================================================
+# Inline Per-Claim Citation Verification Engine
+# ==============================================================================
+
+_INLINE_CITATION_RE = re.compile(
+    r'\[(?:Doc:\s*)?([^,\]\n]+?)(?:,\s*(?:[Pp]age\s*|[Pp]\.?\s*)?(\d+))?\](?!\()',
+    re.IGNORECASE,
+)
+
+
+def _normalize_name(val: str | None) -> str:
+    if not val:
+        return ""
+    name = Path(str(val)).name.lower()
+    return re.sub(r'[^a-z0-9]', '', name)
+
+
+def verify_and_filter_inline_citations(
+    text: str,
+    retrieved_citations: list[dict[str, Any]],
+    mode: str = "flag",
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    """
+    Check that every inline citation written by the generator points to a
+    chunk that was actually retrieved in this turn. Drop or flag hallucinated citations.
+
+    Args:
+        text: Generated answer text containing inline citations (e.g. `[doc.pdf, page 2]`).
+        retrieved_citations: List of citation dictionaries retrieved in the current turn.
+        mode: "flag" to replace unverified citation with `[UNVERIFIED CITATION: ...]`,
+              "drop" to remove unverified citation from the text completely.
+
+    Returns:
+        tuple[str, list[dict[str, Any]], dict[str, Any]]:
+            - verified_text: Sanitized text with valid citations preserved and invalid flagged/dropped.
+            - verified_citations: Subset of retrieved_citations actually referenced in the text.
+            - summary: Detailed verification report.
+    """
+    if not text:
+        return text, [], {
+            "total_inline_citations": 0,
+            "verified_count": 0,
+            "unverified_count": 0,
+            "verified_citations": [],
+            "unverified_citations": [],
+            "mode": mode,
+        }
+
+    retrieved_lookup = []
+    for rc in (retrieved_citations or []):
+        rc_src_norm = _normalize_name(rc.get("source"))
+        rc_title_norm = _normalize_name(rc.get("title"))
+        rc_id_norm = _normalize_name(str(rc.get("chunk_id", "")))
+        rc_page = rc.get("page")
+        retrieved_lookup.append({
+            "record": rc,
+            "src_norm": rc_src_norm,
+            "title_norm": rc_title_norm,
+            "id_norm": rc_id_norm,
+            "page": rc_page,
+        })
+
+    verified_citations: list[dict[str, Any]] = []
+    seen_verified_ids: set[str] = set()
+    unverified_citations: list[dict[str, Any]] = []
+    total_found = 0
+
+    def _replace_match(match: re.Match) -> str:
+        nonlocal total_found
+        raw_match = match.group(0)
+
+        # Skip already flagged citations or non-document tags
+        if "UNVERIFIED" in raw_match:
+            return raw_match
+
+        source_raw = (match.group(1) or "").strip()
+        page_raw = match.group(2)
+        cited_page = int(page_raw) if page_raw and page_raw.isdigit() else None
+        source_norm = _normalize_name(source_raw)
+
+        if not source_norm or source_norm in ("doc", "page", "source"):
+            return raw_match
+
+        total_found += 1
+
+        # Search for a match in retrieved chunks
+        matched_rc = None
+        for item in retrieved_lookup:
+            is_name_match = (
+                source_norm in item["src_norm"]
+                or item["src_norm"] in source_norm
+                or (item["title_norm"] and (source_norm in item["title_norm"] or item["title_norm"] in source_norm))
+                or source_norm == item["id_norm"]
+            )
+            if not is_name_match:
+                continue
+
+            if cited_page is not None and item["page"] is not None:
+                if cited_page != item["page"]:
+                    continue
+
+            matched_rc = item["record"]
+            break
+
+        if matched_rc:
+            cid = str(matched_rc.get("chunk_id", ""))
+            if cid and cid not in seen_verified_ids:
+                seen_verified_ids.add(cid)
+                verified_citations.append(matched_rc)
+            return raw_match
+
+        unverified_record = {
+            "raw": raw_match,
+            "source": source_raw,
+            "page": cited_page,
+        }
+        unverified_citations.append(unverified_record)
+
+        if mode == "drop":
+            return ""
+        else:
+            page_suffix = f", page {cited_page}" if cited_page is not None else ""
+            return f"[UNVERIFIED CITATION: {source_raw}{page_suffix}]"
+
+    verified_text = _INLINE_CITATION_RE.sub(_replace_match, text)
+
+    if mode == "drop":
+        verified_text = re.sub(r' +', ' ', verified_text).strip()
+
+    summary = {
+        "total_inline_citations": total_found,
+        "verified_count": total_found - len(unverified_citations),
+        "unverified_count": len(unverified_citations),
+        "verified_citations": verified_citations,
+        "unverified_citations": unverified_citations,
+        "mode": mode,
+    }
+
+    return verified_text, verified_citations, summary

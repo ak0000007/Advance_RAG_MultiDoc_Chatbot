@@ -3,22 +3,30 @@ LangChain tools backed by the project's existing
 retrieval infrastructure.
 """
 
+import asyncio
 import logging
 import re
-from typing import Optional
+from typing import Optional, Any
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.output_parsers import PydanticOutputParser
-from src.rag.grading import RetrievalGrade
+from src.rag.grading import ChunkGrade, RetrievalGrade
 from src.retrieval.citations import format_document_citation
 
 logger = logging.getLogger(__name__)
 
-def build_document_search_tool(retriever, grader_llm, rewriter_chain, max_attempts: int):
+def build_document_search_tool(
+    retriever,
+    grader_llm,
+    rewriter_chain,
+    max_attempts: int,
+    irrelevance_threshold: float = 0.8,
+):
     """
     Create a LangChain Tool backed by the project's
     existing hybrid + reranking retriever.
-    Includes self-correcting retrieval logic and tenant metadata isolation.
+    Includes parallel per-chunk grading, filtering, self-correcting retrieval logic,
+    and tenant metadata isolation.
     """
 
     @tool
@@ -47,7 +55,8 @@ def build_document_search_tool(retriever, grader_llm, rewriter_chain, max_attemp
             metadata_filter["tenant_id"] = str(tenant_id)
 
         active_filter = metadata_filter if metadata_filter else None
-        
+        parser = PydanticOutputParser(pydantic_object=ChunkGrade)
+
         for attempt in range(1, max_attempts + 1):
             documents = await retriever.ainvoke(
                 {
@@ -62,44 +71,100 @@ def build_document_search_tool(retriever, grader_llm, rewriter_chain, max_attemp
                     "for this query."
                 )
 
-            results = []
-            for index, document in enumerate(documents, start=1):
-                xml_entry, _ = format_document_citation(document, index)
-                results.append(xml_entry)
-            context = "\n\n".join(results)
+            # Grade each chunk in parallel using asyncio.gather
+            async def _grade_single_chunk(document, idx: int):
+                xml_entry, _ = format_document_citation(document, idx)
+                chunk_text = getattr(document, "page_content", "") or str(document)
+                try:
+                    grade = await grader_llm.ainvoke(
+                        {
+                            "question": query,
+                            "chunk": chunk_text,
+                            "context": chunk_text,
+                            "format_instructions": parser.get_format_instructions(),
+                        }
+                    )
+                    return document, grade, xml_entry, None
+                except Exception as exc:
+                    return document, None, xml_entry, exc
 
-            try:
-                parser = PydanticOutputParser(pydantic_object=RetrievalGrade)
-                grade = await grader_llm.ainvoke(
-                    {
-                        "question": query,
-                        "context": context,
-                        "format_instructions": parser.get_format_instructions(),
-                    }
-                )
-                relevant = grade.relevant
-                reason = grade.reason
-            except Exception as e:
+            graded_results = await asyncio.gather(
+                *[_grade_single_chunk(doc, idx) for idx, doc in enumerate(documents, start=1)]
+            )
+
+            # If all grader calls threw exceptions, fail-safe return with loud unverified banner
+            failed_exceptions = [exc for _, _, _, exc in graded_results if exc is not None]
+            if len(failed_exceptions) == len(graded_results) and failed_exceptions:
+                all_context = "\n\n".join([xml for _, _, xml, _ in graded_results])
+                first_exc = failed_exceptions[0]
                 logger.error(
-                    f"CRITICAL: Retrieval grading failed on attempt {attempt}: {e}. "
+                    f"CRITICAL: Retrieval grading failed on attempt {attempt}: {first_exc}. "
                     f"Returning retrieval context with unverified flag to prevent silent failure.",
                     exc_info=True,
                 )
-                return f"[UNVERIFIED RETRIEVAL - Grader Evaluation Failed: {e}]\n\n{context}"
+                return f"[UNVERIFIED RETRIEVAL - Grader Evaluation Failed: {first_exc}]\n\n{all_context}"
 
-            logger.info(f"Retrieval Attempt {attempt} | Query: {current_query} | Relevant: {relevant} | Reason: {reason}")
+            relevant_entries: list[tuple[Any, str]] = []
+            irrelevant_entries: list[tuple[Any, Any]] = []
+            had_grader_exception = bool(failed_exceptions)
 
-            if relevant:
-                return context
+            for doc, grade, xml_entry, exc in graded_results:
+                if exc is not None:
+                    logger.warning(
+                        f"Per-chunk grader threw exception on attempt {attempt}: {exc}. Retaining chunk as unverified.",
+                        exc_info=False,
+                    )
+                    relevant_entries.append((doc, xml_entry))
+                    continue
 
+                is_rel = getattr(grade, "is_relevant", getattr(grade, "relevant", True))
+                if is_rel:
+                    relevant_entries.append((doc, xml_entry))
+                else:
+                    irrelevant_entries.append((doc, grade))
+
+            total_count = len(documents)
+            irrelevant_count = len(irrelevant_entries)
+            irrelevance_ratio = (irrelevant_count / total_count) if total_count > 0 else 1.0
+
+            logger.info(
+                f"Retrieval Attempt {attempt} | Query: {current_query} | "
+                f"Total: {total_count} | Relevant: {len(relevant_entries)} | "
+                f"Irrelevant: {irrelevant_count} (ratio: {irrelevance_ratio:.2f}) | "
+                f"Threshold: {irrelevance_threshold}"
+            )
+
+            # Determine whether to trigger corrective retry
+            should_retry = (len(relevant_entries) == 0) or (irrelevance_ratio >= irrelevance_threshold and not had_grader_exception)
+
+            if not should_retry and relevant_entries:
+                # Pass ONLY the filtered relevant chunks to generation
+                filtered_context = "\n\n".join([xml for _, xml in relevant_entries])
+                return filtered_context
+
+            # If retry condition met and attempts remain, rewrite query and search again
             if attempt < max_attempts:
+                reasons = [
+                    getattr(g, "reason", "")
+                    for _, g in irrelevant_entries
+                    if getattr(g, "reason", "")
+                ]
+                reason_summary = "; ".join(reasons[:3]) or "Retrieved chunks did not contain relevant information to answer the question."
                 current_query = await rewriter_chain.ainvoke(
                     {
                         "question": query,
-                        "reason": reason,
+                        "reason": reason_summary,
                     }
                 )
 
-        return "Note: Relevance of these documents could not be fully confirmed.\n\n" + context
+        # Max attempts reached without satisfying relevance threshold
+        if relevant_entries:
+            # Return available relevant chunks
+            return "\n\n".join([xml for _, xml in relevant_entries])
+
+        # If zero chunks were verified as relevant across all attempts, return last attempt with warning note
+        all_last_xml = [format_document_citation(d, i)[0] for i, d in enumerate(documents, start=1)]
+        fallback_context = "\n\n".join(all_last_xml)
+        return "Note: Relevance of these documents could not be fully confirmed.\n\n" + fallback_context
 
     return search_documents

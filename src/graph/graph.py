@@ -64,7 +64,7 @@ BEHAVIORAL GUIDELINES:
 2. Base answers on tool results only. If tools return nothing relevant, say so — do not hallucinate.
 3. When showing booking/payment/package data, summarize clearly and concisely.
 4. When clarifying ambiguity, always ask the user a direct, explicit question specifying which item to act on.
-5. Citation Discipline: When answering questions using information from search_documents, cite source title and page number inline where available (e.g. '[Doc: <Title>, Page <N>]' or '[<Title>]').
+5. Citation Discipline: When answering questions using information from search_documents, cite every factual claim inline immediately using '[source, page]' (e.g. '[cancellation_policy.pdf, page 3]'). NEVER cite documents or page numbers not provided in the retrieved context. Every citation is automatically verified against retrieved documents.
 """
 
 
@@ -147,9 +147,32 @@ def build_rag_graph(
                     b.get("text", "") if isinstance(b, dict) else str(b)
                     for b in response.content
                 ]
-                update["answer"] = "".join(texts)
+                raw_answer = "".join(texts)
             else:
-                update["answer"] = str(response.content)
+                raw_answer = str(response.content)
+
+            # Automated Inline Citation Verification
+            current_citations = state.get("citations") or []
+            verification_mode = (
+                config.get("configurable", {}).get("citation_verification_mode")
+                if config
+                else None
+            )
+            if not verification_mode:
+                from src.config import settings
+                verification_mode = getattr(settings, "citation_verification_mode", "flag")
+
+            if current_citations:
+                from src.retrieval.citations import verify_and_filter_inline_citations
+                verified_answer, _, verification_summary = verify_and_filter_inline_citations(
+                    raw_answer,
+                    current_citations,
+                    mode=verification_mode,
+                )
+                update["answer"] = verified_answer
+                update["citation_verification"] = verification_summary
+            else:
+                update["answer"] = raw_answer
 
         return update
 

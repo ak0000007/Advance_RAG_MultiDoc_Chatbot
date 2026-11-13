@@ -81,6 +81,10 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="Source document citations retrieved and used for the response.",
     )
+    citation_verification: dict[str, Any] | None = Field(
+        default=None,
+        description="Automated inline citation verification report (total, verified, unverified counts).",
+    )
     trace_id: str | None = Field(
         default=None,
         description="Distributed trace ID for observability correlation across LangSmith / Langfuse / OpenTelemetry.",

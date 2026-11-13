@@ -236,9 +236,12 @@ async def _run_and_respond(graph, inputs, config: dict, thread_id: str) -> ChatR
         except Exception:
             continue
 
+    citation_verification = snapshot.values.get("citation_verification") if snapshot and snapshot.values else None
+
     return ChatResponse(
         answer=snapshot.values.get("answer", "") if snapshot and snapshot.values else "",
         citations=citations_list,
+        citation_verification=citation_verification,
         trace_id=trace_id,
     )
 
@@ -345,12 +348,15 @@ async def _stream_graph_events(graph, inputs, config: dict, thread_id: str):
             messages = snapshot.values.get("messages", []) if snapshot and snapshot.values else []
             raw_citations = extract_citations_from_messages(messages, current_turn_only=True)
 
+            citation_verification = snapshot.values.get("citation_verification") if snapshot and snapshot.values else None
+
             payload = json.dumps({
                 "event": "done",
                 "interrupted": False,
                 "thread_id": thread_id,
                 "answer": final_answer,
                 "citations": raw_citations,
+                "citation_verification": citation_verification,
                 "trace_id": trace_id,
             })
             yield f"event: done\ndata: {payload}\n\n"

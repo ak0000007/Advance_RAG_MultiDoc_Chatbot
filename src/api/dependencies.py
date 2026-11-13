@@ -61,7 +61,7 @@ _DEFAULT_POOL = object()
 
 def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, checkpointer=None):
     """Internal helper to construct shared LLM, RAG tools, and checkpointer."""
-    from src.rag.grading import RetrievalGrade, build_retrieval_grader
+    from src.rag.grading import ChunkGrade, RetrievalGrade, build_chunk_grader, build_retrieval_grader
     from src.rag.rewriter import build_corrective_rewriter
 
     if hasattr(pool, "get_tuple") or hasattr(pool, "put"):
@@ -122,7 +122,7 @@ def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, ch
         top_k=5,
     )
 
-    grader_chain = build_retrieval_grader(retrieval_grader_llm)
+    grader_chain = build_chunk_grader(retrieval_grader_llm)
     rewriter_chain = build_corrective_rewriter(llm)
 
     qdrant_tool = build_document_search_tool(
@@ -130,6 +130,7 @@ def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, ch
         grader_chain,
         rewriter_chain,
         settings.max_retrieval_attempts,
+        irrelevance_threshold=settings.crag_retry_irrelevance_threshold,
     )
 
     if sf_client is _DEFAULT_CLIENT:

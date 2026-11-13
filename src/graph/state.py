@@ -61,5 +61,5 @@ class RAGState(TypedDict, total=False):
     classified_domain: str
 
     # -----------------------------------------------------
-    # Answer evaluation
-    # -----------------------------------------------------
+    # Answer evaluation & Verification
+    citation_verification: dict[str, Any]

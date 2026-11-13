@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     retrieval_confidence_threshold: float = 0.7
     retrieval_min_confident_docs: int = 3
     max_retrieval_attempts: int = 2
+    crag_retry_irrelevance_threshold: float = 0.8
+    citation_verification_mode: str = "flag"
     postgres_url: str | None = None
     qdrant_url: str | None = None
     qdrant_api_key: SecretStr | None = None
