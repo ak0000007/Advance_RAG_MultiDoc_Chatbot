@@ -4,6 +4,7 @@ load_dotenv()
 from src.telemetry import setup_langsmith
 setup_langsmith()
 
+import argparse
 import asyncio
 import hashlib
 import uuid
@@ -17,26 +18,32 @@ from src.embeddings.embedding import BGEEmbeddings
 from src.config import settings
 
 
-def generate_chunk_id(doc, chunk_idx: int) -> str:
-    """Generate deterministic RFC 4122 UUIDv5 based on source, index, and content hash."""
+def generate_chunk_id(doc, chunk_idx: int, tenant_id: str = "default") -> str:
+    """Generate deterministic RFC 4122 UUIDv5 based on tenant, source, index, and content hash."""
     source = doc.metadata.get("source", "unknown")
     content_hash = hashlib.sha256(doc.page_content.encode("utf-8")).hexdigest()
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source}:{chunk_idx}:{content_hash}"))
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{tenant_id}:{source}:{chunk_idx}:{content_hash}"))
 
 
 def main():
-    print("Loading documents from data/...")
-    loader = MultiDocumentLoader(data_directory="./data")
+    parser = argparse.ArgumentParser(description="Ingest documents with deterministic IDs and tenant isolation.")
+    parser.add_argument("--data-dir", default="./data", help="Directory with documents to index")
+    parser.add_argument("--tenant-id", default="default", help="Tenant ID for document isolation")
+    args = parser.parse_args()
+
+    print(f"Loading documents from {args.data_dir} for tenant '{args.tenant_id}'...")
+    loader = MultiDocumentLoader(data_directory=args.data_dir)
     docs = loader.load_directory()
     
-    print("Chunking documents...")
+    print(f"Loaded {len(docs)} document objects. Chunking documents...")
     chunker = DocumentChunker(chunk_size=1000, chunk_overlap=200)
     chunks = chunker.split_documents(docs)
 
-    print(f"Generating deterministic IDs for {len(chunks)} chunks...")
+    print(f"Generating deterministic IDs and stamping tenant '{args.tenant_id}' for {len(chunks)} chunks...")
     doc_ids = []
     for idx, chunk in enumerate(chunks):
-        cid = generate_chunk_id(chunk, idx)
+        chunk.metadata["tenant_id"] = args.tenant_id
+        cid = generate_chunk_id(chunk, idx, tenant_id=args.tenant_id)
         chunk.id = cid
         chunk.metadata["chunk_id"] = cid
         if "title" not in chunk.metadata:
@@ -69,7 +76,7 @@ def main():
     bm25_store.add_documents(chunks)
     bm25_store.save(bm25_path)
 
-    print(f"Ingestion complete. Qdrant & BM25 synchronized at {bm25_path}.")
+    print(f"Ingestion complete. Qdrant & BM25 synchronized at {bm25_path} (tenant='{args.tenant_id}').")
 
 
 if __name__ == "__main__":

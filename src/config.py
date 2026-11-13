@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # API Authentication & Security
     api_secret_key: SecretStr | None = None
     sf_default_username: str | None = None
+    api_key_mapping: dict[str, dict[str, str]] = {}
+
+    # Demo & Mock CRM Mode (run without Salesforce credentials)
+    mock_salesforce: bool = False
 
     # Write safety caps
     # Set WRITES_ENABLED=false in .env to strip ALL write tools at startup (read-only mode).
@@ -56,12 +60,24 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "advance-rag-chatbot"
 
-    @field_validator("langsmith_tracing", "langfuse_enabled", "otel_enabled", mode="before")
+    @field_validator("langsmith_tracing", "langfuse_enabled", "otel_enabled", "mock_salesforce", mode="before")
     @classmethod
     def parse_bool_env(cls, v):
         if isinstance(v, str):
             return v.strip().lower() in ("true", "1", "yes", "on")
         return bool(v)
+
+    @field_validator("api_key_mapping", mode="before")
+    @classmethod
+    def parse_api_key_mapping(cls, v):
+        if isinstance(v, str):
+            v_str = v.strip()
+            if v_str:
+                try:
+                    return json.loads(v_str)
+                except Exception:
+                    pass
+        return v or {}
 
     @field_validator("cors_origins", mode="before")
     @classmethod

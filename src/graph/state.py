@@ -53,8 +53,9 @@ class RAGState(TypedDict, total=False):
     # Checked by the update tool before initiating any approval flow.
     write_count: int
 
-    # Authenticated user context: persisted across interrupts and thread turns.
+    # Authenticated user and tenant context: persisted across interrupts and thread turns.
     sf_username: str
+    tenant_id: str
 
     # Multi-agent architecture: tracks which specialist subgraph handled the turn
     classified_domain: str

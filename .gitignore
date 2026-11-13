@@ -60,4 +60,5 @@ scratch/
 # Generated HTML documentation
 docs/*.html
 *.html
+!Explaination/*.html
 

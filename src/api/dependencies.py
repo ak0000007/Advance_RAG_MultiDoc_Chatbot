@@ -41,6 +41,10 @@ from src.clients.salesforce_client import SalesforceAsyncClient
 
 @lru_cache
 def get_salesforce_client() -> SalesforceAsyncClient | None:
+    if settings.mock_salesforce:
+        from src.clients.mock_salesforce import MockSalesforceAsyncClient
+        return MockSalesforceAsyncClient()
+
     if not settings.sf_client_id or not settings.sf_private_key_path:
         return None
         

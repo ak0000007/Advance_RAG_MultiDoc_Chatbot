@@ -7,6 +7,7 @@ OCP: add new routers in new files, include them in app.py.
 
 import json
 import re
+import secrets
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
@@ -33,29 +34,68 @@ security_bearer = HTTPBearer(auto_error=False)
 security_api_key = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
+class AuthUser(str):
+    """
+    Authenticated user wrapper carrying username and tenant_id context.
+    Inherits from str so existing string consumers continue to function seamlessly.
+    """
+    username: str
+    tenant_id: str
+
+    def __new__(cls, username: str, tenant_id: str = "default"):
+        obj = super().__new__(cls, username)
+        obj.username = username
+        obj.tenant_id = tenant_id
+        return obj
+
+
 def _verify_auth_and_get_user(
     auth_bearer: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
     api_key: Optional[str] = Security(security_api_key),
-) -> Optional[str]:
+) -> Optional[AuthUser]:
     """
-    Enforce API authentication and resolve authenticated user identity.
-    If settings.api_secret_key is set, rejects unauthenticated calls with 401.
-    If not set (dev mode), permits access.
+    Enforce API authentication, constant-time token comparison, and user/tenant mapping.
+    Resolves authenticated user identity and tenant context.
     """
+    token = None
+    if isinstance(auth_bearer, HTTPAuthorizationCredentials):
+        token = auth_bearer.credentials
+    elif isinstance(api_key, str):
+        token = api_key
+
+    # 1. Check api_key_mapping first (maps specific tokens to {username, tenant_id})
+    if settings.api_key_mapping and token:
+        for mapped_key, user_info in settings.api_key_mapping.items():
+            if secrets.compare_digest(token, mapped_key):
+                if isinstance(user_info, dict):
+                    uname = user_info.get("username") or settings.sf_default_username or "api_user"
+                    tid = user_info.get("tenant_id") or "default"
+                else:
+                    uname = str(user_info)
+                    tid = "default"
+                return AuthUser(uname, tid)
+
+    # 2. Check global api_secret_key with constant-time comparison
     required_key = (
         settings.api_secret_key.get_secret_value()
         if hasattr(settings.api_secret_key, "get_secret_value")
         else settings.api_secret_key
     )
     if required_key:
-        token = auth_bearer.credentials if auth_bearer else api_key
-        if not token or token != required_key:
+        if not token or not secrets.compare_digest(token, required_key):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or missing authentication credentials.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-    return settings.sf_default_username
+        if settings.sf_default_username:
+            return AuthUser(settings.sf_default_username, "default")
+        return None
+
+    # 3. Dev mode / unauthenticated fallback
+    if settings.sf_default_username:
+        return AuthUser(settings.sf_default_username, "default")
+    return None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,6 +105,7 @@ def _build_config(
     sf_username: str | None = None,
     trace_id: str | None = None,
     endpoint: str = "chat",
+    tenant_id: str | None = None,
 ) -> dict:
     tid = trace_id or generate_trace_id()
     metadata = {
@@ -74,6 +115,8 @@ def _build_config(
     }
     if sf_username:
         metadata["sf_username"] = sf_username
+    if tenant_id:
+        metadata["tenant_id"] = tenant_id
 
     tags = ["advance-rag", "langgraph", endpoint]
     callbacks = get_tracer_callbacks(
@@ -90,6 +133,8 @@ def _build_config(
     }
     if sf_username:
         configurable["sf_username"] = sf_username
+    if tenant_id:
+        configurable["tenant_id"] = tenant_id
 
     return {
         "configurable": configurable,
@@ -102,10 +147,10 @@ def _build_config(
 
 def _prepare_chat_context(
     request: ChatRequest,
-    auth_user: Optional[str],
+    auth_user: Optional[str | AuthUser],
 ) -> tuple[dict, dict, str]:
     """
-    Standardize message sequence, authenticated sf_username, and thread config.
+    Standardize message sequence, authenticated sf_username, tenant_id, and thread config.
     """
     messages = []
 
@@ -128,15 +173,18 @@ def _prepare_chat_context(
     raw_username = auth_user or request.sf_username
     sf_username = None
     if raw_username:
-        sf_username = re.sub(r"[\x00-\x1f\x7f]", "", raw_username).strip()[:100]
+        sf_username = re.sub(r"[\x00-\x1f\x7f]", "", str(raw_username)).strip()[:100]
+
+    tenant_id = getattr(auth_user, "tenant_id", None) or "default"
 
     thread_id = request.thread_id or str(uuid.uuid4())
     trace_id = getattr(request, "trace_id", None) or generate_trace_id()
-    config = _build_config(thread_id, sf_username, trace_id=trace_id)
+    config = _build_config(thread_id, sf_username, trace_id=trace_id, tenant_id=tenant_id)
     inputs = {
         "question": request.question,
         "messages": messages,
         "citations": [],
+        "tenant_id": tenant_id,
     }
     if sf_username:
         inputs["sf_username"] = sf_username
@@ -385,13 +433,24 @@ async def resume_chat(
             detail=f"Thread '{request.thread_id}' is not paused or does not exist.",
         )
 
-    # Preserve sf_username across resume: state checkpoint or server auth
+    # Preserve sf_username and tenant_id across resume: state checkpoint or server auth
     thread_sf_username = (
         snapshot.values.get("sf_username")
         if snapshot.values
         else None
     ) or auth_user
-    config = _build_config(request.thread_id, thread_sf_username, trace_id=trace_id, endpoint="resume")
+    thread_tenant_id = (
+        snapshot.values.get("tenant_id")
+        if snapshot.values
+        else None
+    ) or getattr(auth_user, "tenant_id", "default")
+    config = _build_config(
+        request.thread_id,
+        thread_sf_username,
+        trace_id=trace_id,
+        endpoint="resume",
+        tenant_id=thread_tenant_id,
+    )
 
     return await _run_and_respond(
         graph,
@@ -425,7 +484,18 @@ async def resume_chat_stream(
         if snapshot.values
         else None
     ) or auth_user
-    config = _build_config(request.thread_id, thread_sf_username, trace_id=trace_id, endpoint="resume_stream")
+    thread_tenant_id = (
+        snapshot.values.get("tenant_id")
+        if snapshot.values
+        else None
+    ) or getattr(auth_user, "tenant_id", "default")
+    config = _build_config(
+        request.thread_id,
+        thread_sf_username,
+        trace_id=trace_id,
+        endpoint="resume_stream",
+        tenant_id=thread_tenant_id,
+    )
 
     inputs = Command(resume=request.decision)
     return StreamingResponse(

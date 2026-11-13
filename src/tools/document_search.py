@@ -80,9 +80,12 @@ def build_document_search_tool(retriever, grader_llm, rewriter_chain, max_attemp
                 relevant = grade.relevant
                 reason = grade.reason
             except Exception as e:
-                logger.warning(f"Retrieval grading failed: {e}. Defaulting to relevant.")
-                relevant = True
-                reason = "Grading failed, assumed relevant."
+                logger.error(
+                    f"CRITICAL: Retrieval grading failed on attempt {attempt}: {e}. "
+                    f"Returning retrieval context with unverified flag to prevent silent failure.",
+                    exc_info=True,
+                )
+                return f"[UNVERIFIED RETRIEVAL - Grader Evaluation Failed: {e}]\n\n{context}"
 
             logger.info(f"Retrieval Attempt {attempt} | Query: {current_query} | Relevant: {relevant} | Reason: {reason}")
 

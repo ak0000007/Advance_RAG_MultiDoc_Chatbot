@@ -133,7 +133,7 @@ Advance_RAG_Chatbot/
 
 ```bash
 # Clone the repository
-git clone https://github.com/ak0000007/Advance_RAG_MultiDoc_Chatbot.git
+git clone https://github.com/ak0000007/Advance_RAG_MultiDoc_Chatbot.git Advance_RAG_Chatbot
 cd Advance_RAG_Chatbot
 
 # Create and activate virtual environment
