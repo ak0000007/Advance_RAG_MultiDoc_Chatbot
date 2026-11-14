@@ -1,15 +1,8 @@
 import logging
 from pathlib import Path
+from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
-
-from langchain_community.document_loaders import (
-    PyPDFLoader,
-    TextLoader,
-    CSVLoader,
-    UnstructuredWordDocumentLoader,
-    UnstructuredExcelLoader,
-)
 
 
 class MultiDocumentLoader:
@@ -43,38 +36,29 @@ class MultiDocumentLoader:
         resolved_path = self._validate_path(file_path)
         extension = resolved_path.suffix.lower()
 
-        if extension == ".pdf":
-            loader = PyPDFLoader(
-                str(resolved_path)
-            )
-
+        if extension == ".txt":
+            content = resolved_path.read_text(encoding="utf-8")
+            documents = [Document(page_content=content, metadata={"source": str(resolved_path)})]
+        elif extension == ".pdf":
+            from langchain_community.document_loaders import PyPDFLoader
+            loader = PyPDFLoader(str(resolved_path))
+            documents = loader.load()
         elif extension == ".docx":
-            loader = UnstructuredWordDocumentLoader(
-                str(resolved_path)
-            )
-
+            from langchain_community.document_loaders import UnstructuredWordDocumentLoader
+            loader = UnstructuredWordDocumentLoader(str(resolved_path))
+            documents = loader.load()
         elif extension == ".csv":
-            loader = CSVLoader(
-                str(resolved_path)
-            )
-
+            from langchain_community.document_loaders import CSVLoader
+            loader = CSVLoader(str(resolved_path))
+            documents = loader.load()
         elif extension in [".xlsx", ".xls"]:
-            loader = UnstructuredExcelLoader(
-                str(resolved_path)
-            )
-
-        elif extension == ".txt":
-            loader = TextLoader(
-                str(resolved_path),
-                encoding="utf-8"
-            )
-
+            from langchain_community.document_loaders import UnstructuredExcelLoader
+            loader = UnstructuredExcelLoader(str(resolved_path))
+            documents = loader.load()
         else:
             raise ValueError(
                 f"Unsupported file type: {extension}"
             )
-
-        documents = loader.load()
 
         for document in documents:
             document.metadata["file_name"] = (

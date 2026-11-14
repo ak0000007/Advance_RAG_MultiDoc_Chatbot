@@ -24,6 +24,8 @@ import argparse
 import json
 import logging
 import os
+import platform
+import random
 import statistics
 import sys
 import time
@@ -31,9 +33,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+import torch
 from langchain_core.documents import Document
 
-from evals.rag.metrics import evaluate_retrieval_case
+from evals.rag.metrics import (
+    aggregate_category_metrics,
+    aggregate_split_metrics,
+    evaluate_retrieval_case,
+    format_category_markdown_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,10 +144,18 @@ def build_mock_retrievers() -> dict[str, Callable[[str], list[Document]]]:
         "BM25 Only": _sparse_search,
         "Hybrid (RRF)": _hybrid_search,
         "Hybrid + Rerank": _rerank_search,
+        "_components": {
+            "embed": lambda q: [0.0] * 384,
+            "vector_search": lambda vec, q="": _dense_search(q),
+            "bm25": _sparse_search,
+            "fusion": lambda lists, q="": _hybrid_search(q),
+            "rerank": lambda q, docs: _rerank_search(q),
+            "corpus_chunk_count": len(mock_docs),
+        },
     }
 
 
-def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
+def build_live_retrievers(device: str | None = None) -> dict[str, Any]:
     """Instantiate live production retrievers from project modules."""
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -152,8 +168,9 @@ def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
         QdrantStore,
         settings,
     )
+    from src.retrieval.hybrid_retriever import reciprocal_rank_fusion
 
-    embeddings = BGEEmbeddings().get_embeddings()
+    embeddings = BGEEmbeddings(device=device).get_embeddings()
 
     if settings.qdrant_url:
         qdrant_store = QdrantStore(
@@ -195,6 +212,7 @@ def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
 
     reranker = CrossEncoderReranker(
         model_name=settings.reranker_model_name,
+        device=device,
     )
 
     dense_retriever = qdrant_store.as_retriever(search_kwargs={"k": 20})
@@ -217,6 +235,14 @@ def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
         "BM25 Only": _sparse_search,
         "Hybrid (RRF)": _hybrid_search,
         "Hybrid + Rerank": _rerank_search,
+        "_components": {
+            "embed": lambda q: embeddings.embed_query(q),
+            "vector_search": lambda vec, q="": qdrant_store.vector_store.similarity_search_by_vector(vec, k=20),
+            "bm25": lambda q: bm25_store.search(q, k=20),
+            "fusion": lambda lists, q="": reciprocal_rank_fusion(lists, k=60),
+            "rerank": lambda q, docs: reranker.rerank(q, docs[:10], top_k=5),
+            "corpus_chunk_count": count,
+        },
     }
 
 
@@ -233,16 +259,19 @@ def evaluate_llm_judge(
     query: str,
     retrieved_docs: list[Document],
     is_unanswerable: bool,
-    expected_answer: str,
+    expected_answer: str = "",
+    llm: Any = None,
 ) -> dict[str, float]:
     """
     Optional LLM Judge: Evaluates answer generation, faithfulness, and abstention.
     For unanswerable queries, checks if output abstains from hallucinating.
+    For answerable queries, measures false abstention and groundedness.
     """
     try:
-        from src.llm.provider import create_llm
+        if llm is None:
+            from src.llm.provider import create_llm
+            llm = create_llm()
 
-        llm = create_llm()
         context = "\n\n".join([d.page_content for d in retrieved_docs[:3]])
         prompt = (
             f"Context:\n{context}\n\n"
@@ -259,23 +288,27 @@ def evaluate_llm_judge(
             "i do not know",
             "cannot be answered",
             "does not contain",
+            "cannot answer",
         ]
         abstained = any(t in text.lower() for t in abstention_triggers)
 
         if is_unanswerable:
             abstention_score = 1.0 if abstained else 0.0
+            false_abstention_score = 0.0
             faithfulness_score = 1.0 if abstained else 0.0
         else:
-            abstention_score = 0.0 if abstained else 1.0
-            faithfulness_score = 1.0 if not abstained and len(text) > 10 else 0.0
+            abstention_score = 0.0
+            false_abstention_score = 1.0 if abstained else 0.0
+            faithfulness_score = 1.0 if (not abstained and len(text.strip()) > 10) else 0.0
 
         return {
             "faithfulness": faithfulness_score,
             "abstention": abstention_score,
+            "false_abstention": false_abstention_score,
         }
     except Exception as exc:
         logger.warning("LLM Judge evaluation failed: %s", exc)
-        return {"faithfulness": 0.0, "abstention": 0.0}
+        return {"faithfulness": 0.0, "abstention": 0.0, "false_abstention": 0.0}
 
 
 def run_evaluation(
@@ -283,9 +316,17 @@ def run_evaluation(
     output_path: Path,
     use_judge: bool = False,
     mock_mode: bool = False,
+    seed: int = 0,
+    repeats: int = 3,
+    device: str | None = None,
+    split_filter: str = "all",
 ) -> dict[str, Any]:
     """Run full evaluation suite across all 4 configurations."""
     cases = load_dataset(dataset_path)
+    if split_filter != "all":
+        cases = [c for c in cases if c.get("split") == split_filter]
+        if not cases:
+            raise ValueError(f"No cases found for split filter: {split_filter}")
 
     if mock_mode:
         mode = "mock"
@@ -293,7 +334,7 @@ def run_evaluation(
     else:
         mode = "live"
         try:
-            retrievers = build_live_retrievers()
+            retrievers = build_live_retrievers(device=device)
         except Exception as exc:
             logger.error("Live infrastructure initialization failed: %s", exc)
             sys.exit(
@@ -306,27 +347,41 @@ def run_evaluation(
     k_cutoffs = (1, 3, 5)
     answerable_cases = [c for c in cases if not c.get("is_unanswerable", False)]
     unanswerable_cases = [c for c in cases if c.get("is_unanswerable", False)]
+    pipeline_names = ["Dense Only", "BM25 Only", "Hybrid (RRF)", "Hybrid + Rerank"]
+    components = retrievers.get("_components", {})
+    rng = random.Random(seed)
+
+    comp_latencies: dict[str, list[float]] = {
+        "query_embedding": [],
+        "vector_search": [],
+        "bm25": [],
+        "fusion": [],
+        "rerank": [],
+    }
 
     pipeline_scores: dict[str, dict[str, list[float]]] = {
         name: {
             "hit@1": [],
             "hit@3": [],
             "hit@5": [],
+            "recall@5": [],
             "mrr": [],
             "ndcg@5": [],
             "latency": [],
         }
-        for name in retrievers
+        for name in pipeline_names
     }
     if use_judge:
-        for name in retrievers:
+        for name in pipeline_names:
             pipeline_scores[name]["faithfulness"] = []
             pipeline_scores[name]["abstention"] = []
+            pipeline_scores[name]["false_abstention"] = []
 
     case_details = [
         {
             "id": case.get("id"),
             "category": case.get("category"),
+            "split": case.get("split", "dev"),
             "query": case["query"],
             "is_unanswerable": case.get("is_unanswerable", False),
             "results": {},
@@ -334,64 +389,116 @@ def run_evaluation(
         for case in cases
     ]
 
-    for name, retriever_func in retrievers.items():
-        print(f"\n--- Evaluating Pipeline: {name} ---", flush=True)
-        # Warmup pass over all queries
-        print(f"[Warmup] Running warmup pass for {name} across all queries...", flush=True)
-        for c in cases:
+    # Warm-up pass across all queries (discarded from benchmark timing)
+    print(f"\n[Warmup] Running discarded warmup pass across all queries ({mode.upper()})...", flush=True)
+    for c in cases:
+        wq = c["query"]
+        for p_name in pipeline_names:
             try:
-                retriever_func(c["query"])
+                retrievers[p_name](wq)
             except Exception as e:
-                logger.warning("Warmup failed for %s on '%s': %s", name, c["query"][:30], e)
-        print(f"[Warmup] {name} warmed. Running timed evaluation pass...", flush=True)
+                logger.warning("Warmup query failed for %s: %s", p_name, e)
+    print(f"[Warmup] Completed. Running timed benchmark ({repeats} repeats, seed={seed})...\n", flush=True)
 
-        for idx, case in enumerate(cases):
-            query = case["query"]
-            relevant_sources = case.get("relevant_sources", [])
-            contains = case.get("contains", [])
-            is_unanswerable = case.get("is_unanswerable", False)
+    for idx, case in enumerate(cases):
+        query = case["query"]
+        relevant_sources = case.get("relevant_sources", [])
+        contains = case.get("contains", [])
+        is_unanswerable = case.get("is_unanswerable", False)
 
-            start_time = time.perf_counter()
-            try:
-                retrieved = retriever_func(query)
-            except Exception as e:
-                logger.error("Pipeline '%s' failed on query: %s", name, e)
-                retrieved = []
-            elapsed = time.perf_counter() - start_time
-            pipeline_scores[name]["latency"].append(elapsed)
+        q_pipeline_times: dict[str, list[float]] = {name: [] for name in pipeline_names}
+        q_comp_times: dict[str, list[float]] = {k: [] for k in comp_latencies}
+        cached_docs: dict[str, list[Document]] = {}
+
+        for r_iter in range(repeats):
+            # 1. Component timings
+            t0 = time.perf_counter()
+            q_vec = components["embed"](query)
+            t_embed = time.perf_counter() - t0
+            q_comp_times["query_embedding"].append(t_embed)
+
+            t0 = time.perf_counter()
+            dense_docs = components["vector_search"](q_vec, query)
+            t_vec = time.perf_counter() - t0
+            q_comp_times["vector_search"].append(t_vec)
+
+            t0 = time.perf_counter()
+            bm25_docs = components["bm25"](query)
+            t_bm25 = time.perf_counter() - t0
+            q_comp_times["bm25"].append(t_bm25)
+
+            t0 = time.perf_counter()
+            fused_docs = components["fusion"]([dense_docs, bm25_docs], query)
+            t_fusion = time.perf_counter() - t0
+            q_comp_times["fusion"].append(t_fusion)
+
+            t0 = time.perf_counter()
+            rerank_docs = components["rerank"](query, fused_docs)
+            t_rerank = time.perf_counter() - t0
+            q_comp_times["rerank"].append(t_rerank)
+
+            if r_iter == 0:
+                cached_docs["Dense Only"] = dense_docs
+                cached_docs["BM25 Only"] = bm25_docs
+                cached_docs["Hybrid (RRF)"] = fused_docs[:20]
+                cached_docs["Hybrid + Rerank"] = rerank_docs[:5]
+
+            # 2. Randomized pipeline end-to-end execution
+            order = list(pipeline_names)
+            rng.shuffle(order)
+            for p_name in order:
+                t_start = time.perf_counter()
+                try:
+                    retrievers[p_name](query)
+                except Exception as e:
+                    logger.error("Pipeline '%s' failed on query: %s", p_name, e)
+                elapsed = time.perf_counter() - t_start
+                q_pipeline_times[p_name].append(elapsed)
+
+        # Median per query across repeats
+        for p_name in pipeline_names:
+            med_elapsed = statistics.median(q_pipeline_times[p_name])
+            pipeline_scores[p_name]["latency"].append(med_elapsed)
+            docs = cached_docs.get(p_name, [])
 
             # Compute retrieval metrics ONLY for answerable cases
             if not is_unanswerable:
                 metrics = evaluate_retrieval_case(
-                    retrieved,
+                    docs,
                     relevant_sources=relevant_sources,
                     contains=contains,
                     k_values=k_cutoffs,
                 )
                 for metric_name, val in metrics.items():
-                    if metric_name in pipeline_scores[name]:
-                        pipeline_scores[name][metric_name].append(val)
+                    if metric_name in pipeline_scores[p_name]:
+                        pipeline_scores[p_name][metric_name].append(val)
             else:
                 metrics = None
 
             case_perf = {
                 "metrics": metrics,
-                "latency_sec": round(elapsed, 4),
-                "num_retrieved": len(retrieved),
+                "latency_sec": round(med_elapsed, 4),
+                "num_retrieved": len(docs),
             }
 
             if use_judge:
                 judge_scores = evaluate_llm_judge(
                     query=query,
-                    retrieved_docs=retrieved,
+                    retrieved_docs=docs,
                     is_unanswerable=is_unanswerable,
                     expected_answer=case.get("expected_answer", ""),
                 )
-                pipeline_scores[name]["faithfulness"].append(judge_scores["faithfulness"])
-                pipeline_scores[name]["abstention"].append(judge_scores["abstention"])
+                if not is_unanswerable:
+                    pipeline_scores[p_name]["faithfulness"].append(judge_scores["faithfulness"])
+                    pipeline_scores[p_name]["false_abstention"].append(judge_scores["false_abstention"])
+                else:
+                    pipeline_scores[p_name]["abstention"].append(judge_scores["abstention"])
                 case_perf["judge"] = judge_scores
 
-            case_details[idx]["results"][name] = case_perf
+            case_details[idx]["results"][p_name] = case_perf
+
+        for c_k in comp_latencies:
+            comp_latencies[c_k].append(statistics.median(q_comp_times[c_k]))
 
     # Compute Aggregate Metrics
     summary: dict[str, dict[str, float]] = {}
@@ -414,18 +521,39 @@ def run_evaluation(
             summary[name]["latency_mean"] = 0.0
             summary[name]["latency"] = 0.0
 
+    # Component breakdown summary
+    component_summary: dict[str, dict[str, float]] = {}
+    for c_k, vals in comp_latencies.items():
+        component_summary[c_k] = {
+            "median_sec": round(statistics.median(vals), 4) if vals else 0.0,
+            "p95_sec": round(_compute_percentile(vals, 0.95), 4) if vals else 0.0,
+            "mean_sec": round(statistics.mean(vals), 4) if vals else 0.0,
+        }
+
+    # Sanity check: Hybrid must be >= Dense (or within tolerance)
+    dense_med = summary.get("Dense Only", {}).get("latency_median", 0.0)
+    hybrid_med = summary.get("Hybrid (RRF)", {}).get("latency_median", 0.0)
+    timing_artifact_warning = None
+    if hybrid_med < dense_med - 0.005:
+        timing_artifact_warning = (
+            f"WARNING: Timing artifact suspected! Hybrid latency ({hybrid_med:.4f}s) "
+            f"is less than Dense latency ({dense_med:.4f}s)."
+        )
+        print(f"\n[CRITICAL TIMING WARNING] {timing_artifact_warning}\n")
+
     # Format Markdown Table
     table_lines = [
-        f"| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 | Median (s) | P95 (s) |"
+        f"| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | Recall@5 | MRR | nDCG@5 | Median (s) | P95 (s) |"
         + (" Faithfulness | Abstention |" if use_judge else ""),
-        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |"
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |"
         + (" :---: | :---: |" if use_judge else ""),
     ]
 
     for name, metrics in summary.items():
         row = (
             f"| **{name}** | {metrics.get('hit@1', 0.0):.3f} | {metrics.get('hit@3', 0.0):.3f} | "
-            f"{metrics.get('hit@5', 0.0):.3f} | {metrics.get('mrr', 0.0):.3f} | {metrics.get('ndcg@5', 0.0):.3f} | "
+            f"{metrics.get('hit@5', 0.0):.3f} | {metrics.get('recall@5', 0.0):.3f} | "
+            f"{metrics.get('mrr', 0.0):.3f} | {metrics.get('ndcg@5', 0.0):.3f} | "
             f"{metrics.get('latency_median', 0.0):.4f} | {metrics.get('latency_p95', 0.0):.4f} |"
         )
         if use_judge:
@@ -434,16 +562,51 @@ def run_evaluation(
 
     markdown_table = "\n".join(table_lines)
 
+    # Compute Per-Category Aggregated Metrics
+    category_summary = aggregate_category_metrics(case_details, pipeline_names)
+    category_markdown_table = format_category_markdown_table(category_summary)
+
+    # Compute Split Summaries with Bootstrap CIs
+    dev_summary = aggregate_split_metrics(case_details, pipeline_names, split_name="dev")
+    heldout_summary = aggregate_split_metrics(case_details, pipeline_names, split_name="heldout")
+    overall_split_summary = aggregate_split_metrics(case_details, pipeline_names, split_name=None)
+
+    device_str = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    device_name = (
+        torch.cuda.get_device_name(0)
+        if device_str.startswith("cuda") and torch.cuda.is_available()
+        else platform.processor() or "CPU"
+    )
+    metadata = {
+        "device": device_str,
+        "device_name": device_name,
+        "embedding_model": "BAAI/bge-m3" if not mock_mode else "mock-embedding",
+        "reranker_model": "BAAI/bge-reranker-v2-m3" if not mock_mode else "mock-reranker",
+        "corpus_chunks_count": components.get("corpus_chunk_count", 0),
+        "seed": seed,
+        "repeats": repeats,
+        "component_latencies": component_summary,
+    }
+    if timing_artifact_warning:
+        metadata["timing_artifact_warning"] = timing_artifact_warning
+
     report_payload = {
         "mode": mode,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "dataset_path": str(dataset_path),
+        "split_filter": split_filter,
         "total_cases": len(cases),
         "answerable_cases": len(answerable_cases),
         "unanswerable_cases": len(unanswerable_cases),
         "use_judge": use_judge,
+        "metadata": metadata,
         "summary": summary,
+        "dev_summary": dev_summary,
+        "heldout_summary": heldout_summary,
+        "overall_split_summary": overall_split_summary,
         "markdown_table": markdown_table,
+        "category_summary": category_summary,
+        "category_markdown_table": category_markdown_table,
         "case_details": case_details,
     }
 
@@ -454,10 +617,20 @@ def run_evaluation(
     print("\n" + "=" * 76)
     print(f"        RAG RETRIEVAL EVALUATION REPORT (Mode: {mode.upper()})")
     print(f"        Evaluated on {len(answerable_cases)} answerable cases (and {len(unanswerable_cases)} unanswerable)")
+    print(f"        Device: {device_str.upper()} ({device_name}) | Repeats: {repeats} | Seed: {seed}")
     print("=" * 76 + "\n")
     print(markdown_table)
     print("\n" + "=" * 76)
-    print(f"Report written to: {output_path}\n")
+    print("        PER-CATEGORY RETRIEVAL PERFORMANCE")
+    print("=" * 76 + "\n")
+    print(category_markdown_table)
+    print("\n" + "=" * 76)
+    print("        COMPONENT LATENCY BREAKDOWN (Median / P95)")
+    print("=" * 76)
+    for c_k, c_v in component_summary.items():
+        print(f"  - {c_k:<18}: {c_v['median_sec']:.4f}s (median), {c_v['p95_sec']:.4f}s (P95)")
+    print("=" * 76)
+    print(f"\nReport written to: {output_path}\n")
 
     return report_payload
 
@@ -486,6 +659,31 @@ def main():
         action="store_true",
         help="Run in mock mode without live Qdrant / external API calls",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for randomized pipeline execution order (default 0)",
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=3,
+        help="Number of latency measurement repeats per query (default 3, median taken)",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Target compute device: 'cpu' or 'cuda' (default auto-detect)",
+    )
+    parser.add_argument(
+        "--split",
+        type=str,
+        choices=["all", "dev", "heldout"],
+        default="all",
+        help="Evaluation split to benchmark ('all', 'dev', 'heldout')",
+    )
 
     args = parser.parse_args()
 
@@ -499,6 +697,10 @@ def main():
         output_path=dest_path,
         use_judge=args.judge,
         mock_mode=args.mock,
+        seed=args.seed,
+        repeats=args.repeats,
+        device=args.device,
+        split_filter=args.split,
     )
 
 

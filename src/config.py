@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
     use_reranker: bool = False
     retrieval_confidence_threshold: float = 0.7
+    retrieval_min_score: float | None = None
     retrieval_min_confident_docs: int = 3
     max_retrieval_attempts: int = 2
     crag_retry_irrelevance_threshold: float = 0.8

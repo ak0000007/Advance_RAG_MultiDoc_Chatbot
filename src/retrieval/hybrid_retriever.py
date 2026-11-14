@@ -19,17 +19,22 @@ from langchain_core.runnables import RunnableLambda
 def reciprocal_rank_fusion(
     ranked_lists: list[list[Document]],
     k: int = 60,
+    weights: list[float] | None = None,
+    min_score: float | None = None,
 ) -> list[Document]:
     """
-    Merge multiple ranked document lists using RRF.
+    Merge multiple ranked document lists using (weighted) RRF.
 
-    RRF score = sum( 1 / (k + rank) ) across all lists.
+    RRF score = sum( w_i / (k + rank) ) across all lists.
     k=60 is the standard constant from the original RRF paper.
+    If weights is None, default w_i = 1.0 (equal weighting).
+    If min_score is provided, chunks with score < min_score are filtered out.
     """
     scores: dict[str, float] = {}
     doc_map: dict[str, Document] = {}
 
-    for ranked_docs in ranked_lists:
+    for list_idx, ranked_docs in enumerate(ranked_lists):
+        w = float(weights[list_idx]) if weights and list_idx < len(weights) else 1.0
         for rank, doc in enumerate(ranked_docs):
             # Use page_content hash as dedup key since
             # docs from different sources won't share IDs.
@@ -39,11 +44,14 @@ def reciprocal_rank_fusion(
                 doc_map[doc_key] = doc
                 scores[doc_key] = 0.0
 
-            scores[doc_key] += 1.0 / (k + rank + 1)
+            scores[doc_key] += w / (k + rank + 1)
 
     sorted_keys = sorted(
         scores.keys(), key=lambda x: scores[x], reverse=True
     )
+    if min_score is not None:
+        sorted_keys = [key for key in sorted_keys if scores[key] >= min_score]
+
     return [doc_map[key] for key in sorted_keys]
 
 
@@ -74,6 +82,8 @@ class HybridRetriever:
         retrievers: list,
         final_k: int = 10,
         rrf_k: int = 60,
+        weights: list[float] | None = None,
+        min_score: float | None = None,
     ):
         """
         Args:
@@ -81,12 +91,18 @@ class HybridRetriever:
                         that accept a query string and return list[Document].
             final_k:    Number of documents to return after fusion.
             rrf_k:      RRF constant (default 60, per original paper).
+            weights:    Optional list of positive weights for each retriever.
+                        Defaults to None (uniform weight 1.0 for each source).
+            min_score:  Optional minimum fusion score threshold. Chunks below
+                        this score are excluded. Defaults to None.
         """
         if not retrievers:
             raise ValueError("At least one retriever required.")
         self.retrievers = retrievers
         self.final_k = final_k
         self.rrf_k = rrf_k
+        self.weights = weights
+        self.min_score = min_score
 
     @staticmethod
     def _invoke_retriever_sync(retriever, q):
@@ -140,7 +156,12 @@ class HybridRetriever:
             with ThreadPoolExecutor(max_workers=len(self.retrievers)) as executor:
                 all_results = list(executor.map(lambda r: self._invoke_retriever_sync(r, query), self.retrievers))
 
-        fused = reciprocal_rank_fusion(all_results, k=self.rrf_k)
+        fused = reciprocal_rank_fusion(
+            all_results,
+            k=self.rrf_k,
+            weights=self.weights,
+            min_score=self.min_score,
+        )
         limit = query.get("k", self.final_k) if isinstance(query, dict) else self.final_k
         return fused[:limit]
 
@@ -148,7 +169,12 @@ class HybridRetriever:
         """Run all retrievers concurrently via asyncio.gather, fuse results via RRF."""
         tasks = [self._invoke_retriever_async(r, query) for r in self.retrievers]
         all_results = await asyncio.gather(*tasks)
-        fused = reciprocal_rank_fusion(list(all_results), k=self.rrf_k)
+        fused = reciprocal_rank_fusion(
+            list(all_results),
+            k=self.rrf_k,
+            weights=self.weights,
+            min_score=self.min_score,
+        )
         limit = query.get("k", self.final_k) if isinstance(query, dict) else self.final_k
         return fused[:limit]
 

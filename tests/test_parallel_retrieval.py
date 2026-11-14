@@ -133,3 +133,35 @@ async def test_reranker_wrap_retriever_async(monkeypatch):
     sync_results = wrapped.invoke({"question": "test"})
     assert len(sync_results) == 2
     assert sync_results[0].page_content == "Doc 2"
+
+
+def test_weighted_rrf_behavior():
+    """Verify weighted RRF: weights=None preserves uniform fusion, 1/0 reduces to single list."""
+    docA = Document(page_content="Unique Document A", metadata={"id": "A"})
+    docB = Document(page_content="Unique Document B", metadata={"id": "B"})
+    docC = Document(page_content="Unique Document C", metadata={"id": "C"})
+
+    list1 = [docA, docB]
+    list2 = [docC, docB]
+
+    # 1. weights=None should match uniform weights=[1.0, 1.0]
+    res_none = reciprocal_rank_fusion([list1, list2], k=60, weights=None)
+    res_uniform = reciprocal_rank_fusion([list1, list2], k=60, weights=[1.0, 1.0])
+    assert [d.page_content for d in res_none] == [d.page_content for d in res_uniform]
+
+    # 2. weight=[1.0, 0.0] reduces to list1 priority
+    res_list1_only = reciprocal_rank_fusion([list1, list2], k=60, weights=[1.0, 0.0])
+    assert res_list1_only[0].page_content == "Unique Document A"
+    assert res_list1_only[1].page_content == "Unique Document B"
+
+    # 3. weight=[0.0, 1.0] reduces to list2 priority
+    res_list2_only = reciprocal_rank_fusion([list1, list2], k=60, weights=[0.0, 1.0])
+    assert res_list2_only[0].page_content == "Unique Document C"
+    assert res_list2_only[1].page_content == "Unique Document B"
+
+    # 4. HybridRetriever with weights passes weights properly
+    r1 = SyncMockRetriever("r1", 0.01, [docA, docB])
+    r2 = SyncMockRetriever("r2", 0.01, [docC, docB])
+    hybrid = HybridRetriever([r1, r2], final_k=3, weights=[10.0, 0.1])
+    res_hybrid = hybrid.search("query")
+    assert res_hybrid[0].page_content == "Unique Document A"

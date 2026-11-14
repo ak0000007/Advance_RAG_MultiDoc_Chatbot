@@ -24,17 +24,35 @@ class BGEEmbeddings:
         self.device = device
         self.model_name = model_name
 
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=model_name,
+        model_kwargs = {
+            "device": device,
+        }
+        # Avoid hanging on DNS/network check if offline or in sandbox
+        try:
+            from huggingface_hub import try_to_load_from_cache
+            # if cached locally, enforce local_files_only
+            model_kwargs["local_files_only"] = True
+        except Exception:
+            pass
 
-            model_kwargs={
-                "device": device
-            },
-
-            encode_kwargs={
-                "normalize_embeddings": True
-            }
-        )
+        try:
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name=model_name,
+                model_kwargs=model_kwargs,
+                encode_kwargs={
+                    "normalize_embeddings": True
+                }
+            )
+        except Exception:
+            # Fall back without local_files_only if not cached yet
+            model_kwargs.pop("local_files_only", None)
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name=model_name,
+                model_kwargs=model_kwargs,
+                encode_kwargs={
+                    "normalize_embeddings": True
+                }
+            )
 
     def get_embeddings(self):
 

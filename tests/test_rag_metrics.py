@@ -13,7 +13,9 @@ import pytest
 from langchain_core.documents import Document
 
 from evals.rag.metrics import (
+    aggregate_category_metrics,
     evaluate_retrieval_case,
+    format_category_markdown_table,
     hit_at_k,
     is_chunk_relevant,
     mrr,
@@ -136,3 +138,152 @@ def test_contains_text_matching(sample_documents):
     assert results["hit@1"] == 1.0
     assert results["mrr"] == 1.0
     assert results["ndcg@1"] == 1.0
+
+
+def test_multi_source_and_alternate_phrase_matching(sample_documents):
+    """Test matching when multiple authoritative sources and alternate phrases are specified."""
+    # Matches second source in list and alternate contains phrase
+    assert is_chunk_relevant(
+        sample_documents[1],
+        target_sources=["other_policy.pdf", "safari_terms.docx"],
+        contains=["non-existent phrase", "20% non-refundable deposit"],
+    ) is True
+
+    # Neither source matches
+    assert is_chunk_relevant(
+        sample_documents[1],
+        target_sources=["other_policy.pdf", "unrelated.pdf"],
+        contains=["20% non-refundable deposit"],
+    ) is False
+
+
+def test_aggregate_category_metrics_arithmetic():
+    """Test mathematical accuracy of per-category metric aggregation."""
+    fake_case_details = [
+        {
+            "id": "c1",
+            "category": "single_doc",
+            "is_unanswerable": False,
+            "results": {
+                "Dense Only": {
+                    "metrics": {
+                        "hit@1": 1.0,
+                        "hit@3": 1.0,
+                        "hit@5": 1.0,
+                        "recall@5": 1.0,
+                        "mrr": 1.0,
+                        "ndcg@5": 1.0,
+                    }
+                }
+            },
+        },
+        {
+            "id": "c2",
+            "category": "single_doc",
+            "is_unanswerable": False,
+            "results": {
+                "Dense Only": {
+                    "metrics": {
+                        "hit@1": 0.0,
+                        "hit@3": 1.0,
+                        "hit@5": 1.0,
+                        "recall@5": 0.5,
+                        "mrr": 0.5,
+                        "ndcg@5": 0.6309,
+                    }
+                }
+            },
+        },
+        {
+            "id": "c3",
+            "category": "unanswerable",
+            "is_unanswerable": True,
+            "results": {
+                "Dense Only": {
+                    "judge": {"abstention": 1.0, "faithfulness": 1.0}
+                }
+            },
+        },
+    ]
+
+    summary = aggregate_category_metrics(fake_case_details, pipelines=["Dense Only"])
+
+    # Category single_doc assertions
+    assert "single_doc" in summary
+    sd = summary["single_doc"]["Dense Only"]
+    assert sd["N"] == 2
+    assert sd["note"] == "low sample - indicative only"
+    assert sd["hit@1"] == 0.5
+    assert sd["hit@3"] == 1.0
+    assert sd["hit@5"] == 1.0
+    assert sd["recall@5"] == 0.75
+    assert sd["mrr"] == 0.75
+    assert sd["ndcg@5"] == 0.8155
+
+    # Category unanswerable assertions
+    assert "unanswerable" in summary
+    ua = summary["unanswerable"]["Dense Only"]
+    assert ua["N"] == 1
+    assert ua["is_unanswerable"] is True
+    assert ua["abstention_rate"] == 1.0
+    assert ua["note"] == "low sample - indicative only"
+
+    # Markdown formatting assertion
+    md_table = format_category_markdown_table(summary)
+    assert "| **single_doc** | Dense Only | 2 | 0.500 | 1.000 | 1.000 | 0.750 | 0.750 | 0.816 | low sample - indicative only |" in md_table
+    assert "| **unanswerable** | Dense Only | 1 | N/A | N/A | N/A | N/A | N/A | N/A |" in md_table
+
+
+def test_bootstrap_confidence_interval_math():
+    """Verify bootstrap CI properties on deterministic values."""
+    from evals.rag.metrics import bootstrap_confidence_interval
+
+    # All identical values: CI lower and upper match exactly
+    mean, low, high = bootstrap_confidence_interval([1.0, 1.0, 1.0, 1.0])
+    assert mean == 1.0
+    assert low == 1.0
+    assert high == 1.0
+
+    # Binary split: mean = 0.5, lower < 0.5 < upper
+    mean, low, high = bootstrap_confidence_interval([0.0, 1.0, 0.0, 1.0, 0.0, 1.0], seed=42)
+    assert mean == 0.5
+    assert 0.0 < low <= 0.5 <= high < 1.0
+
+
+def test_aggregate_split_metrics():
+    """Verify split filtering and aggregation across dev and heldout."""
+    from evals.rag.metrics import aggregate_split_metrics
+
+    case_details = [
+        {
+            "id": "c1",
+            "split": "dev",
+            "is_unanswerable": False,
+            "results": {"Dense": {"metrics": {"hit@1": 1.0, "hit@3": 1.0, "hit@5": 1.0, "recall@5": 1.0, "mrr": 1.0, "ndcg@5": 1.0}}},
+        },
+        {
+            "id": "c2",
+            "split": "heldout",
+            "is_unanswerable": False,
+            "results": {"Dense": {"metrics": {"hit@1": 0.0, "hit@3": 1.0, "hit@5": 1.0, "recall@5": 0.5, "mrr": 0.5, "ndcg@5": 0.7}}},
+        },
+        {
+            "id": "c3",
+            "split": "dev",
+            "is_unanswerable": True,
+            "results": {"Dense": {"judge": {"abstention": 1.0}}},
+        },
+    ]
+
+    dev_summary = aggregate_split_metrics(case_details, pipelines=["Dense"], split_name="dev")
+    assert dev_summary["Dense"]["N"] == 1
+    assert dev_summary["Dense"]["hit@1"] == 1.0
+
+    heldout_summary = aggregate_split_metrics(case_details, pipelines=["Dense"], split_name="heldout")
+    assert heldout_summary["Dense"]["N"] == 1
+    assert heldout_summary["Dense"]["hit@1"] == 0.0
+
+    all_summary = aggregate_split_metrics(case_details, pipelines=["Dense"], split_name=None)
+    assert all_summary["Dense"]["N"] == 2
+    assert all_summary["Dense"]["hit@1"] == 0.5
+

@@ -294,23 +294,31 @@ python -m evals.rag.runner
 python -m evals.rag.runner --mock
 ```
 
-#### Empirical Retrieval Benchmark Results (Live Corpus, 28 Answerable Cases)
+<!-- RAG_RESULTS_START -->
+#### Empirical Retrieval Benchmark Results (Mode: LIVE, N=35 cases: 28 answerable, 7 unanswerable)
 
-| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 | Median (s) | P95 (s) | Architecture Profile |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Dense Only (BGE-M3)** | **0.821** | **1.000** | **1.000** | **0.911** | **0.913** | 0.4519s | 0.8797s | Strong semantic ranking on prose queries; 100% Top-3 Recall |
-| **BM25 Only (Okapi)** | 0.750 | 0.893 | 0.964 | 0.839 | 0.805 | **0.0003s** | **0.0005s** | Ultra-low latency (~0.3ms); anchors exact IDs, per diems & tier figures |
-| **Hybrid (RRF)** | 0.750 | **1.000** | **1.000** | 0.875 | 0.893 | 0.3471s | 0.4381s | **Balanced Default**: 100% Top-3 Recall; pairs semantic matching with exact token safety |
-| **Hybrid + Rerank (Cross-Encoder)** | 0.750 | **1.000** | **1.000** | 0.875 | 0.901 | 20.9268s | 27.8963s | **GPU Opt-In**: +0.008 nDCG@5 gain; requires CUDA GPU for real-time latency (~15ms) |
+| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 | Median (s) | P95 (s) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Dense Only** | 0.821 | 1.000 | 1.000 | 0.911 | 0.913 | 4.9060 | 7.4095 |
+| **BM25 Only** | 0.750 | 0.893 | 0.964 | 0.839 | 0.805 | 0.0004 | 0.0399 |
+| **Hybrid (RRF)** | 0.750 | 1.000 | 1.000 | 0.875 | 0.893 | 0.3698 | 1.3955 |
+| **Hybrid + Rerank** | 0.750 | 1.000 | 1.000 | 0.875 | 0.901 | 20.9268 | 27.8963 |
 
 > [!NOTE]
 > **Sample Size & Statistical Significance**:
-> Evaluated on 28 answerable benchmark cases (and 7 unanswerable abstention tests). At $N = 28$, a single case represents $\sim 3.57\%$ of Hit@1; the $0.821$ vs $0.750$ delta represents a **two-question difference**, which is within normal variance (no statistically meaningful difference at this sample size). Dense excels at purely semantic phrasing, while Hybrid is preferred in enterprise CRM/travel domains where queries contain exact codes (e.g., booking IDs like `BK-201`, expense amounts like `$250`, or fare classes).
+> Evaluated on 28 answerable benchmark cases (and 7 unanswerable abstention tests). With small samples, a single case represents ~3.5% of Hit@1. Dense achieves higher Hit@1 on broad semantic phrasing, while Hybrid matches on Top-3 and Top-5 Recall (100%) while guaranteeing exact token retention (IDs, per diems) via BM25.
 
-> [!NOTE]
-> **Reranking Caveat & CPU vs. GPU Deployment**:
-> `Hybrid + Rerank` uses `BAAI/bge-reranker-v2-m3` (568M params). On CPU environments, scoring 10 candidate document pairs takes ~21s per query, yielding parity Hit@1 (0.750) and a marginal nDCG@5 increase (0.893 -> 0.901).
-> Therefore, **`USE_RERANKER=false` is the default** for low-latency CPU production environments. On GPU/CUDA infrastructure (e.g. Google Colab T4/A100) or when maximum ranking precision is required, set `USE_RERANKER=true` in `.env`.
+#### Per-Category Retrieval Breakdown
+
+
+
+#### Component-Level Latency Breakdown
+
+- **Environment**: Device = CPU (CPU) | Repeats = 1 | Seed = 0
+- **Status**: GPU latency not measured (evaluated on CPU)
+
+*Generated automatically from `evals/results/rag_report.json` (Timestamp: `2026-11-14T09:54:34.988641+00:00`). Do not edit manually.*
+<!-- RAG_RESULTS_END -->
 
 ### 4. Reranker Diagnostic Inspection
 
