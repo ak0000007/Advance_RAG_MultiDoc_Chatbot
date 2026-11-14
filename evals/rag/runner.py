@@ -163,9 +163,6 @@ def build_mock_retrievers() -> dict[str, Callable[[str], list[Document]]]:
 
 def build_live_retrievers(device: str | None = None) -> dict[str, Any]:
     """Instantiate live production retrievers from project modules."""
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-
     from src.api.dependencies import (
         BGEEmbeddings,
         BM25Store,

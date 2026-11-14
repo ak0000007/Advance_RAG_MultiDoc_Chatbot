@@ -113,6 +113,21 @@ def update_readme(readme_path: Path, report_path: Path, dry_run: bool = False) -
     with open(report_path, "r", encoding="utf-8") as f:
         report = json.load(f)
 
+    # Check for stale report against dataset case count
+    dataset_path = Path("evals/rag/rag_dataset.jsonl")
+    if dataset_path.exists():
+        with open(dataset_path, "r", encoding="utf-8") as f:
+            actual_count = sum(1 for line in f if line.strip())
+        report_count = report.get("total_cases", 0)
+        if report_count != actual_count:
+            print(
+                f"[ERROR] Cannot update README: Stale report detected! "
+                f"Report has {report_count} cases, but {dataset_path} has {actual_count} cases.\n"
+                f"Please run 'python -m evals.rag.runner' to generate a fresh live report with {actual_count} cases.",
+                file=sys.stderr,
+            )
+            return False
+
     if not readme_path.exists():
         print(f"Error: README file not found at {readme_path}", file=sys.stderr)
         return False
