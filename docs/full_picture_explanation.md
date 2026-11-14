@@ -25,7 +25,7 @@ sequenceDiagram
 
 ### The Key File: `graph.py` — The `SYSTEM_PROMPT`
 
-Look at lines 33–65 of [`graph.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/graph.py#L33-L65).
+Look at lines 33–65 of [`graph.py`](src/graph/graph.py#L33-L65).
 
 This is a **65-line text block** that tells the LLM:
 - What tools exist
@@ -71,7 +71,7 @@ The LLM then has to **read all of this** and **decide** what to do. It's like gi
 
 ### What You Have Now: Docstring-based "instructions"
 
-Look at your [`salesforce_tools.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/tools/salesforce_tools.py#L19-L28):
+Look at your [`salesforce_tools.py`](src/tools/salesforce_tools.py#L19-L28):
 
 ```python
 @tool
@@ -287,9 +287,9 @@ Benefits:
 
 | Step | What | Where | Time |
 |------|------|--------|------|
-| 1 | Move per-tool guidance from `SYSTEM_PROMPT` into each tool's docstring | [`graph.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/graph.py#L33-L65) + [`salesforce_tools.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/tools/salesforce_tools.py) | 0.5 day |
-| 2 | Add Pydantic `args_schema` to update tools (booking, payment, package) | [`salesforce_tools.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/tools/salesforce_tools.py) | 1 day |
-| 3 | Shrink `SYSTEM_PROMPT` to role + 3–4 hard rules only | [`graph.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/graph.py#L33-L65) | 1 hour |
+| 1 | Move per-tool guidance from `SYSTEM_PROMPT` into each tool's docstring | [`graph.py`](src/graph/graph.py#L33-L65) + [`salesforce_tools.py`](src/tools/salesforce_tools.py) | 0.5 day |
+| 2 | Add Pydantic `args_schema` to update tools (booking, payment, package) | [`salesforce_tools.py`](src/tools/salesforce_tools.py) | 1 day |
+| 3 | Shrink `SYSTEM_PROMPT` to role + 3–4 hard rules only | [`graph.py`](src/graph/graph.py#L33-L65) | 1 hour |
 | 4 | Evaluate Agentforce (only if SF-side complexity grows) | Research spike | Future |
 
 Steps 1–3 are pure refactor — no new dependencies, no architecture change. The agent will be more reliable immediately.

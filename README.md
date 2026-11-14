@@ -200,38 +200,68 @@ SF_PRIVATE_KEY_PATH="./secrets/server.key"
 SF_DOMAIN="https://your-domain.my.salesforce.com"
 ```
 
-### 4. Ingest Documents
+### 4. Ingest Documents (Reproducible Corpus)
 
-Place your operational documents (PDF, DOCX, CSV, XLSX) into `data/` and run the ingestion pipeline:
+The repository includes a reproducible operational corpus of 16 corporate travel policies in [`data/txt/`](data/txt/). To build or refresh the vector store (Qdrant) and sparse index (BM25) with deterministic IDs and chunk metadata:
 
 ```bash
-python ingest.py
+python ingest.py --data-dir data/txt --recreate
 ```
 
-
+For tenant-isolated ingestion or Salesforce permission tagging:
+```bash
+python ingest.py --data-dir data/txt --tenant-id acme_corp --sf-manifest data/manifest.json --recreate
 ```
 
-### 3. `GET /health`
-Returns system liveness status.
+### 5. Start Application Server
+
+```bash
+uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Access the interactive web UI at `http://localhost:8000/`.
+
+### 6. API Interaction Examples
+
+#### Document Q&A (Read-Only)
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is the cancellation refund policy if canceled within 48 hours?", "session_id": "sess_01"}'
+```
+
+#### Mutating CRM Action (HITL Approval Loop)
+```bash
+# 1. Initiate booking update (triggers interrupt approval)
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Update booking BK-201 to 4 travelers", "session_id": "sess_02"}'
+
+# 2. Resume and approve the transaction
+curl -X POST http://localhost:8000/chat/resume \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "sess_02", "approved": true}'
+```
+
+#### Health Check
+```bash
+curl http://localhost:8000/health
+```
 
 ---
 
 ## Verification & Testing
 
-Run the automated test suite:
+### 1. Automated Test Suite
+
+Run the full pytest suite:
 
 ```bash
 pytest tests/ -v
 ```
 
-Run the standalone evaluation benchmark harness (OpenAI/Anthropic benchmark format):
-
-```bash
-python -m evals.runner
-```
-
-Current test suite validates:
-- Golden dataset accuracy (16/16 test cases, 100% accuracy) across Opportunities, Bookings, Packages, Payments, and Guards
+Validates:
+- Golden dataset accuracy (16/16 test cases, 100% accuracy) across Opportunities, Bookings, Packages, Payments, and Write Guards
 - Mock Salesforce in-memory Apex REST transactions and state retention
 - Grader prompt parsing with `.partial(format_instructions=...)`
 - Disallowed SOQL SObject string rejection via `ValueError`
@@ -240,6 +270,49 @@ Current test suite validates:
 - API key authentication and unauthorized access rejection (`401`)
 - State retention of `sf_username` across `/chat/resume`
 - Multi-attempt retrieval and corrective rewriter routing
+- Restricted CORS origins and credential handling
+
+### 2. CRM & Tool Evaluation Harness
+
+Run the CRM transaction accuracy benchmark:
+
+```bash
+python -m evals.runner
+```
+
+### 3. RAG Retrieval Benchmark (35 Evaluation Cases)
+
+Run the retrieval pipeline evaluation comparing Dense (Qdrant), Sparse (BM25), Hybrid (RRF), and Cross-Encoder Reranking:
+
+```bash
+# Run against live Qdrant + BM25 indexes with warm-up latency calibration
+python -m evals.rag.runner
+
+# Or run in offline/mock mode
+python -m evals.rag.runner --mock
+```
+
+#### Empirical Retrieval Benchmark Results (Live Corpus, 28 Answerable Cases)
+
+| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 | Latency (s) | Recommendation |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Dense Only (BGE-M3)** | 0.821 | 1.000 | 1.000 | 0.911 | 0.913 | 3.64s | High semantic recall; includes remote/local embedding overhead |
+| **BM25 Only (Okapi)** | 0.750 | 0.893 | 0.964 | 0.839 | 0.805 | 0.0007s | Ultra-low latency (~0.7ms); excels on exact IDs, figures & per diems |
+| **Hybrid (RRF)** | **0.750** | **1.000** | **1.000** | **0.875** | **0.893** | **0.37s** | **Recommended Default**: 100% Top-3 Recall, low latency, robust fusion |
+| **Hybrid + Rerank (Cross-Encoder)** | **0.750** | **1.000** | **1.000** | **0.875** | **0.901** | 17.17s | **GPU Opt-In**: +0.008 nDCG@5 gain; CPU inference cost (~17s) prohibitive for real-time |
+
+> [!NOTE]
+> **Reranking Caveat & CPU vs. GPU Deployment**:
+> `Hybrid + Rerank` uses `BAAI/bge-reranker-v2-m3` (568M params). On CPU environments, scoring 10 candidate document pairs takes ~17s per query, yielding parity Hit@1 (0.750) and a marginal nDCG@5 increase (0.893 -> 0.901).
+> Therefore, **`USE_RERANKER=false` is the default** for low-latency CPU production environments. On GPU/CUDA infrastructure or when maximum ranking precision is required, set `USE_RERANKER=true` in `.env`.
+
+### 4. Reranker Diagnostic Inspection
+
+To diagnose candidate pool depths, score direction, and rank shifts before and after cross-encoder reranking:
+
+```bash
+python scripts/diagnose_reranker.py
+```
 
 ---
 

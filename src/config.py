@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
+    use_reranker: bool = False
     retrieval_confidence_threshold: float = 0.7
     retrieval_min_confident_docs: int = 3
     max_retrieval_attempts: int = 2
@@ -54,8 +55,8 @@ class Settings(BaseSettings):
     # Multi-agent architecture toggle: routes through orchestrator + 3 specialist subgraphs
     use_multi_agent_architecture: bool = False
 
-    # CORS Configuration (Debt H9)
-    cors_origins: list[str] = ["*"]
+    # CORS Configuration (Debt H9: Restricted default instead of wildcard)
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000", "http://localhost:5173"]
 
     # Observability & Tracing (P1: LangSmith, Langfuse, OpenTelemetry)
     langsmith_tracing: bool = False
@@ -72,7 +73,7 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "advance-rag-chatbot"
 
-    @field_validator("langsmith_tracing", "langfuse_enabled", "otel_enabled", "mock_salesforce", "sf_auth_enabled", mode="before")
+    @field_validator("langsmith_tracing", "langfuse_enabled", "otel_enabled", "mock_salesforce", "sf_auth_enabled", "use_reranker", mode="before")
     @classmethod
     def parse_bool_env(cls, v):
         if isinstance(v, str):

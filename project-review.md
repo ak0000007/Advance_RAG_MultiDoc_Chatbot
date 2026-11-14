@@ -7,7 +7,7 @@
 ### 🔴 Critical Bugs
 
 #### 1.1 `search_kwargs` parameter silently ignored
-**File:** [qdrant_store.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/vector_stores/qdrant_store.py#L47-L57)
+**File:** [qdrant_store.py](src/vector_stores/qdrant_store.py#L47-L57)
 
 `as_retriever()` accepts `search_kwargs` but hardcodes `{"k": 4}`, ignoring whatever the caller passes. This means any attempt to tune retrieval (top-k, score threshold, filters) from outside is silently discarded.
 
@@ -16,7 +16,7 @@
 ---
 
 #### 1.2 Duplicate hashing logic across two systems
-**Files:** [indexer.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/indexing/indexer.py#L33-L51) and [document_registry.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/ingestion/document_registry.py#L53-L72)
+**Files:** [indexer.py](src/indexing/indexer.py#L33-L51) and [document_registry.py](src/ingestion/document_registry.py#L53-L72)
 
 Both `DocumentIndexer` and `DocumentRegistry` independently implement SHA-256 hashing — one hashes *content strings*, the other hashes *file bytes*. Two parallel change-detection systems that don't communicate create a split-brain risk: the registry says "unchanged" but the indexer sees new content (or vice versa).
 
@@ -25,7 +25,7 @@ Both `DocumentIndexer` and `DocumentRegistry` independently implement SHA-256 ha
 ---
 
 #### 1.3 `datetime.utcnow()` is deprecated
-**File:** [document_registry.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/ingestion/document_registry.py#L115)
+**File:** [document_registry.py](src/ingestion/document_registry.py#L115)
 
 `datetime.utcnow()` has been deprecated since Python 3.12. It returns a naive datetime, which causes subtle bugs across timezones.
 
@@ -34,7 +34,7 @@ Both `DocumentIndexer` and `DocumentRegistry` independently implement SHA-256 ha
 ---
 
 #### 1.4 `load_directory()` swallows non-ValueError exceptions
-**File:** [loader.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/ingestion/loader.py#L100-L105)
+**File:** [loader.py](src/ingestion/loader.py#L100-L105)
 
 The `except ValueError` block only catches unsupported file types. If a PDF is corrupted and `PyPDFLoader` raises an `IOError`, `RuntimeError`, or any other exception, it propagates unhandled and aborts the entire directory load — losing all previously-loaded documents in memory (since they haven't been persisted yet).
 
@@ -43,7 +43,7 @@ The `except ValueError` block only catches unsupported file types. If a PDF is c
 ---
 
 #### 1.5 No chunking/splitting in the source code
-**File:** [chain.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/rag/chain.py)
+**File:** [chain.py](src/rag/chain.py)
 
 Notebooks `02_chunking.ipynb` exist, but there's no `TextSplitter` integration in the `src/` pipeline. If documents are indexed without splitting, entire multi-page PDFs become single vectors — destroying retrieval precision and likely exceeding embedding model token limits.
 
@@ -54,7 +54,7 @@ Notebooks `02_chunking.ipynb` exist, but there's no `TextSplitter` integration i
 ### 🟡 Medium Issues
 
 #### 1.6 `torch` imported unconditionally in embedding module
-**File:** [embedding.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/embeddings/embedding.py#L1)
+**File:** [embedding.py](src/embeddings/embedding.py#L1)
 
 `import torch` at module level means any import of the embeddings package loads the entire PyTorch runtime (~2 GB memory). This hurts cold-start time and prevents running lightweight components (loader, registry) without GPU dependencies.
 
@@ -63,7 +63,7 @@ Notebooks `02_chunking.ipynb` exist, but there's no `TextSplitter` integration i
 ---
 
 #### 1.7 SQLite record manager path is relative and uncontrolled
-**File:** [indexer.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/indexing/indexer.py#L20)
+**File:** [indexer.py](src/indexing/indexer.py#L20)
 
 `db_url="sqlite:///record_manager.db"` creates the database in whatever the current working directory happens to be. Running from different directories creates orphan databases, causing re-indexing of already-indexed documents.
 
@@ -72,7 +72,7 @@ Notebooks `02_chunking.ipynb` exist, but there's no `TextSplitter` integration i
 ---
 
 #### 1.8 Model ID hardcoded with no override path
-**File:** [model.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/llm/model.py#L13)
+**File:** [model.py](src/llm/model.py#L13)
 
 `MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"` is a module-level constant. Switching models requires editing source code.
 
@@ -81,7 +81,7 @@ Notebooks `02_chunking.ipynb` exist, but there's no `TextSplitter` integration i
 ---
 
 #### 1.9 Custom dataclasses `Document` and `Chunk` are unused
-**Files:** [document.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/models/document.py), [chunk.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/models/chunk.py)
+**Files:** [document.py](src/models/document.py), [chunk.py](src/models/chunk.py)
 
 These models define `Document` and `Chunk` dataclasses, but the entire pipeline uses LangChain's `langchain_core.documents.Document` instead. This is dead code.
 
@@ -97,7 +97,7 @@ API keys (`api_key` in `QdrantStore`) flow as plain strings. No `.env` loading m
 **Strategy:** Add `python-dotenv` and load secrets from environment variables. Never accept secrets as constructor defaults.
 
 #### 1.11 Unpinned dependencies
-**File:** [requirements.txt](file:///home/akhilsaini/Advance_RAG_Chatbot/requirements.txt)
+**File:** [requirements.txt](requirements.txt)
 
 Only `bitsandbytes>=0.46.1` has any version constraint. All other dependencies are unpinned. A `pip install` tomorrow could pull breaking versions of `langchain` (which releases breaking changes frequently).
 
@@ -154,10 +154,10 @@ LangChain's `index()` with `SQLRecordManager` already provides idempotent, incre
 ### 2.5 No configuration management
 
 Settings are scattered across default parameter values in multiple files:
-- Collection name: `"multidoc_rag"` in [qdrant_store.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/vector_stores/qdrant_store.py#L18) and [indexer.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/indexing/indexer.py#L21)
-- Model ID: [model.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/llm/model.py#L13)
-- DB URL: [indexer.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/indexing/indexer.py#L20)
-- Data directory: [loader.py](file:///home/akhilsaini/Advance_RAG_Chatbot/src/ingestion/loader.py#L14)
+- Collection name: `"multidoc_rag"` in [qdrant_store.py](src/vector_stores/qdrant_store.py#L18) and [indexer.py](src/indexing/indexer.py#L21)
+- Model ID: [model.py](src/llm/model.py#L13)
+- DB URL: [indexer.py](src/indexing/indexer.py#L20)
+- Data directory: [loader.py](src/ingestion/loader.py#L14)
 
 **Strategy:** Single `config.py` or Pydantic `Settings` class that reads from env vars / `.env` / config file. All components receive their config from one place.
 

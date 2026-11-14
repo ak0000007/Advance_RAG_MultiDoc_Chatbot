@@ -4,9 +4,9 @@
 
 | File | Before | After |
 |------|--------|-------|
-| [`graph.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/graph/graph.py#L33-L44) | 33-line `SYSTEM_PROMPT` with per-tool routing prose | 11-line prompt — role + 5 hard rules only |
-| [`salesforce_tools.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/tools/salesforce_tools.py) | Generic docstrings, routing guidance in prompt | Tool docstrings carry their own routing rules |
-| [`travel_tools.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/tools/travel_tools.py) | Generic docstrings, routing guidance in prompt | PRE-CONDITION + "never ask first" per tool |
+| [`graph.py`](src/graph/graph.py#L33-L44) | 33-line `SYSTEM_PROMPT` with per-tool routing prose | 11-line prompt — role + 5 hard rules only |
+| [`salesforce_tools.py`](src/tools/salesforce_tools.py) | Generic docstrings, routing guidance in prompt | Tool docstrings carry their own routing rules |
+| [`travel_tools.py`](src/tools/travel_tools.py) | Generic docstrings, routing guidance in prompt | PRE-CONDITION + "never ask first" per tool |
 
 **Zero logic changes.** No guards removed. No API calls changed. No graph wiring changed.
 The approval flow, write caps, single-record guard — all untouched.
@@ -20,8 +20,8 @@ The approval flow, write caps, single-record guard — all untouched.
 **What it means:** Tool descriptions become part of the message sent to the LLM. A malicious user could try to craft input that makes the LLM misread a tool description.
 
 **Already mitigated in your code:**
-- [`salesforce_tools.py` line 53](file:///home/akhilsaini/Advance_RAG_Chatbot/src/tools/salesforce_tools.py#L53) — control characters stripped from SF data before returning to LLM
-- [`write_guards.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/write_guards.py) — `single_record_guard`, `bulk_intent_guard`, `session_write_cap` run in Python before any write, regardless of what the LLM says
+- [`salesforce_tools.py` line 53](src/tools/salesforce_tools.py#L53) — control characters stripped from SF data before returning to LLM
+- [`write_guards.py`](src/write_guards.py) — `single_record_guard`, `bulk_intent_guard`, `session_write_cap` run in Python before any write, regardless of what the LLM says
 - Approval interrupt runs **server-side** — LLM cannot bypass it
 
 **Residual risk:** Low. The guards are in code, not prose. Even if the LLM is tricked into calling an update tool, the Python guards will fire before Salesforce is touched.

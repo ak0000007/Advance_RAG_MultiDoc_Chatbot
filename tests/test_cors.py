@@ -17,7 +17,8 @@ def test_cors_preflight_options():
     response = client.options("/chat", headers=headers)
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") in ("http://localhost:3000", "*")
-    assert response.headers.get("access-control-allow-credentials") is None
+    # For restricted origins, credentials are explicitly supported
+    assert response.headers.get("access-control-allow-credentials") == "true"
     assert "POST" in response.headers.get("access-control-allow-methods", "")
     assert "authorization" in response.headers.get("access-control-allow-headers", "").lower()
 
@@ -30,16 +31,16 @@ def test_cors_headers_on_standard_request():
     response = client.get("/health", headers={"Origin": "http://localhost:5173"})
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") in ("http://localhost:5173", "*")
-    assert response.headers.get("access-control-allow-credentials") is None
+    assert response.headers.get("access-control-allow-credentials") == "true"
 
 
 def test_cors_origins_pydantic_parsing():
     """
     Verify Settings parses comma-separated string, JSON list, or defaults.
     """
-    # Default
+    # Default (Restricted secure origins)
     s1 = Settings()
-    assert s1.cors_origins == ["*"]
+    assert s1.cors_origins == ["http://localhost:3000", "http://localhost:8000", "http://localhost:5173"]
 
     # Comma-separated string
     s2 = Settings(cors_origins="http://localhost:3000, https://internal.travel.corp")

@@ -113,14 +113,17 @@ def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, ch
         final_k=20,
     )
 
-    reranker = CrossEncoderReranker(
-        model_name=settings.reranker_model_name,
-    )
-
-    retriever = reranker.wrap_retriever(
-        hybrid.as_dynamic_retriever(),
-        top_k=5,
-    )
+    reranker = None
+    if settings.use_reranker:
+        reranker = CrossEncoderReranker(
+            model_name=settings.reranker_model_name,
+        )
+        retriever = reranker.wrap_retriever(
+            hybrid.as_dynamic_retriever(),
+            top_k=5,
+        )
+    else:
+        retriever = hybrid.as_dynamic_retriever()
 
     grader_chain = build_chunk_grader(retrieval_grader_llm)
     rewriter_chain = build_corrective_rewriter(llm)

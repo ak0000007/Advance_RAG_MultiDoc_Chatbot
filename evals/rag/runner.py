@@ -314,6 +314,18 @@ def run_evaluation(
 
     case_details = []
 
+    # Warm-up pass: ensure embedding models, cross-encoders, and tokenizers
+    # are deserialized and loaded into memory before latency benchmarks begin.
+    print("\n[Warmup] Warming up retrieval pipelines before latency timing...", flush=True)
+    warmup_queries = ["corporate travel policy lead time", "luxury safari deposit rules"]
+    for wq in warmup_queries:
+        for name, retriever_func in retrievers.items():
+            try:
+                retriever_func(wq)
+            except Exception as e:
+                logger.warning("Warmup query failed for %s: %s", name, e)
+    print("[Warmup] Completed. Steady-state latency benchmark beginning.\n", flush=True)
+
     for idx, case in enumerate(cases):
         query = case["query"]
         relevant_sources = case.get("relevant_sources", [])

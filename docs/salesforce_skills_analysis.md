@@ -20,7 +20,7 @@ Two overlapping concepts here — pick based on your setup:
 Salesforce's own AI agent platform. You define **Actions** (Apex, Flow, API calls, Prompt Templates) and **Topics** (scoped intent clusters). Einstein picks the right Action from the Topic based on the user intent — no mega-prompt needed.
 
 ### Option B — LangChain Tools / Structured LangGraph Nodes (Your Stack)
-Since you're on LangGraph + LangChain, a "skill" = a **typed `@tool`** that the LLM calls via function-calling. The LLM sees a JSON schema (name, description, parameters) — not prose. This is already partially done in your [`salesforce_tools.py`](file:///home/akhilsaini/Advance_RAG_Chatbot/src/tools/salesforce_tools.py).
+Since you're on LangGraph + LangChain, a "skill" = a **typed `@tool`** that the LLM calls via function-calling. The LLM sees a JSON schema (name, description, parameters) — not prose. This is already partially done in your [`salesforce_tools.py`](src/tools/salesforce_tools.py).
 
 ### Option C — Hybrid: Your Agent + Salesforce Agentforce Actions API
 Your LangGraph agent calls Salesforce's **Agent API** to invoke Agentforce sessions, combining your RAG layer with Salesforce's native actions.
