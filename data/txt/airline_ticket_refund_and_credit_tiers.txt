@@ -1,0 +1,11 @@
+# Airline Ticket Refund Tiers and Cancellation Policy
+
+## 1. Structured Cancellation Refund Tiers
+- Cancellations submitted 7 calendar days or more prior to scheduled flight departure receive a 100% full refund or unrestricted corporate credit voucher.
+- Cancellations submitted between 48 hours and 7 days prior to scheduled departure receive a 75% refund to the original corporate payment method.
+- Cancellations submitted within 48 hours of scheduled departure qualify for a 50% refund.
+- No-shows without prior notice receive 0% refund and immediately forfeit all ticket value and credit eligibility.
+
+## 2. Refund Processing and Timelines
+- All approved cash refunds are processed within 5 to 10 business days following submission of the cancellation request.
+- Flight credits issued in lieu of refunds remain valid for booking for 12 months from the date of original issuance.

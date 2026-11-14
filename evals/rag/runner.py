@@ -24,6 +24,7 @@ import argparse
 import json
 import logging
 import os
+import statistics
 import sys
 import time
 from datetime import datetime, timezone
@@ -196,9 +197,10 @@ def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
         model_name=settings.reranker_model_name,
     )
 
+    dense_retriever = qdrant_store.as_retriever(search_kwargs={"k": 20})
+
     def _dense_search(query: str) -> list[Document]:
-        retriever = qdrant_store.as_retriever(search_kwargs={"k": 20})
-        return retriever.invoke(query)
+        return dense_retriever.invoke(query)
 
     def _sparse_search(query: str) -> list[Document]:
         return bm25_store.search(query, k=20)
@@ -216,6 +218,15 @@ def build_live_retrievers() -> dict[str, Callable[[str], list[Document]]]:
         "Hybrid (RRF)": _hybrid_search,
         "Hybrid + Rerank": _rerank_search,
     }
+
+
+def _compute_percentile(data: list[float], p: float) -> float:
+    if not data:
+        return 0.0
+    sorted_data = sorted(data)
+    idx = int(p * len(sorted_data))
+    idx = min(idx, len(sorted_data) - 1)
+    return sorted_data[idx]
 
 
 def evaluate_llm_judge(
@@ -312,36 +323,34 @@ def run_evaluation(
             pipeline_scores[name]["faithfulness"] = []
             pipeline_scores[name]["abstention"] = []
 
-    case_details = []
-
-    # Warm-up pass: ensure embedding models, cross-encoders, and tokenizers
-    # are deserialized and loaded into memory before latency benchmarks begin.
-    print("\n[Warmup] Warming up retrieval pipelines before latency timing...", flush=True)
-    warmup_queries = ["corporate travel policy lead time", "luxury safari deposit rules"]
-    for wq in warmup_queries:
-        for name, retriever_func in retrievers.items():
-            try:
-                retriever_func(wq)
-            except Exception as e:
-                logger.warning("Warmup query failed for %s: %s", name, e)
-    print("[Warmup] Completed. Steady-state latency benchmark beginning.\n", flush=True)
-
-    for idx, case in enumerate(cases):
-        query = case["query"]
-        relevant_sources = case.get("relevant_sources", [])
-        contains = case.get("contains", [])
-        is_unanswerable = case.get("is_unanswerable", False)
-        print(f"[{idx+1}/{len(cases)}] Evaluating: {query[:60]}...", flush=True)
-
-        case_record = {
+    case_details = [
+        {
             "id": case.get("id"),
             "category": case.get("category"),
-            "query": query,
-            "is_unanswerable": is_unanswerable,
+            "query": case["query"],
+            "is_unanswerable": case.get("is_unanswerable", False),
             "results": {},
         }
+        for case in cases
+    ]
 
-        for name, retriever_func in retrievers.items():
+    for name, retriever_func in retrievers.items():
+        print(f"\n--- Evaluating Pipeline: {name} ---", flush=True)
+        # Warmup pass over all queries
+        print(f"[Warmup] Running warmup pass for {name} across all queries...", flush=True)
+        for c in cases:
+            try:
+                retriever_func(c["query"])
+            except Exception as e:
+                logger.warning("Warmup failed for %s on '%s': %s", name, c["query"][:30], e)
+        print(f"[Warmup] {name} warmed. Running timed evaluation pass...", flush=True)
+
+        for idx, case in enumerate(cases):
+            query = case["query"]
+            relevant_sources = case.get("relevant_sources", [])
+            contains = case.get("contains", [])
+            is_unanswerable = case.get("is_unanswerable", False)
+
             start_time = time.perf_counter()
             try:
                 retrieved = retriever_func(query)
@@ -382,22 +391,34 @@ def run_evaluation(
                 pipeline_scores[name]["abstention"].append(judge_scores["abstention"])
                 case_perf["judge"] = judge_scores
 
-            case_record["results"][name] = case_perf
-
-        case_details.append(case_record)
+            case_details[idx]["results"][name] = case_perf
 
     # Compute Aggregate Metrics
     summary: dict[str, dict[str, float]] = {}
     for name, metric_dict in pipeline_scores.items():
         summary[name] = {}
         for m_name, vals in metric_dict.items():
+            if m_name == "latency":
+                continue
             summary[name][m_name] = round(sum(vals) / len(vals), 4) if vals else 0.0
+
+        latencies = metric_dict.get("latency", [])
+        if latencies:
+            summary[name]["latency_median"] = round(statistics.median(latencies), 4)
+            summary[name]["latency_p95"] = round(_compute_percentile(latencies, 0.95), 4)
+            summary[name]["latency_mean"] = round(statistics.mean(latencies), 4)
+            summary[name]["latency"] = summary[name]["latency_median"]
+        else:
+            summary[name]["latency_median"] = 0.0
+            summary[name]["latency_p95"] = 0.0
+            summary[name]["latency_mean"] = 0.0
+            summary[name]["latency"] = 0.0
 
     # Format Markdown Table
     table_lines = [
-        f"| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 | Latency (s) |"
+        f"| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 | Median (s) | P95 (s) |"
         + (" Faithfulness | Abstention |" if use_judge else ""),
-        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |"
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |"
         + (" :---: | :---: |" if use_judge else ""),
     ]
 
@@ -405,7 +426,7 @@ def run_evaluation(
         row = (
             f"| **{name}** | {metrics.get('hit@1', 0.0):.3f} | {metrics.get('hit@3', 0.0):.3f} | "
             f"{metrics.get('hit@5', 0.0):.3f} | {metrics.get('mrr', 0.0):.3f} | {metrics.get('ndcg@5', 0.0):.3f} | "
-            f"{metrics.get('latency', 0.0):.4f} |"
+            f"{metrics.get('latency_median', 0.0):.4f} | {metrics.get('latency_p95', 0.0):.4f} |"
         )
         if use_judge:
             row += f" {metrics.get('faithfulness', 0.0):.3f} | {metrics.get('abstention', 0.0):.3f} |"

@@ -1,0 +1,11 @@
+# Car Rental and Ground Transportation Regulations
+
+## 1. Authorized Vehicle Rental Categories
+- All corporate vehicle rentals must be booked within the Compact, Economy, or Mid-Size car categories.
+- Full-size sedans, premium luxury vehicles, and large SUVs are strictly non-reimbursable unless transporting 4 or more business travelers together.
+- Collision Damage Waiver (CDW) and Loss Damage Waiver (LDW) must be declined if renting domestically using authorized corporate charge cards that provide primary insurance.
+
+## 2. Ride-Sharing and Taxi Guidelines
+- Ride-share services (Uber, Lyft) must be reserved using standard Economy or Comfort tiers.
+- Premium luxury ride-sharing options (Uber Black, Lyft Lux, private limousines) are strictly non-reimbursable.
+- Itemized receipts are mandatory for all ground transport expenses exceeding $25.

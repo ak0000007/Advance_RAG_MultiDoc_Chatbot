@@ -19,6 +19,10 @@ env/
 # Data
 data/*
 !data/.gitkeep
+!data/txt/
+!data/txt/**
+!data/sample_docs/
+!data/sample_docs/**
 
 # Generated vector stores
 vector_stores/*
@@ -61,5 +65,5 @@ function-documentation-and-file-manager/
 # Generated HTML documentation (kept locally on system, never committed to git)
 docs/*.html
 *.html
-Explaination/*.html
+Explanation/*.html
 

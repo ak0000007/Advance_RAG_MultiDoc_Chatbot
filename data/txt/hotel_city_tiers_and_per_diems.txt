@@ -1,0 +1,11 @@
+# Hotel City Tiers and Lodging Caps
+
+## 1. Metropolitan Lodging Cap Classification
+- Standard Domestic Lodging (Tier 2 Markets): Capped at $250 per night excluding local taxes and mandatory hotel facility fees.
+- High-Cost Metropolitan Destinations (Tier 1 Markets): Defined as New York City, San Francisco, London, Tokyo, and Zurich. Approved nightly lodging cap is $350 per night.
+- Small Regional Markets (Tier 3): Maximum approved lodging cap is $180 per night.
+- Any lodging reservation exceeding these defined caps requires prior written justification and manager authorization.
+
+## 2. Ineligible Lodging Expenses
+- Personal in-room entertainment (pay-per-view movies), minibar snack purchases, and hotel spa services are strictly non-reimbursable personal expenses.
+- Resort fees and mandatory destination charges will be reimbursed only when booked through the preferred corporate lodging program.
