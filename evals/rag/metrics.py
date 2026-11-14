@@ -31,6 +31,21 @@ def _normalize_source_name(source: str) -> str:
     return p
 
 
+def get_manifest_sources(manifest_path: Path | str = "data/manifest.json") -> tuple[set[str], set[str]]:
+    """Return (authoritative_sources, distractor_sources) normalized as lower-case basenames."""
+    p = Path(manifest_path)
+    if not p.exists():
+        return set(), set()
+    try:
+        import json
+        data = json.loads(p.read_text(encoding="utf-8"))
+        auth = {_normalize_source_name(s) for s in data.get("authoritative_sources", [])}
+        dist = {_normalize_source_name(s) for s in data.get("distractor_sources", [])}
+        return auth, dist
+    except Exception:
+        return set(), set()
+
+
 def doc_matches_source(doc: Document, target_source: str) -> bool:
     """Check if document metadata matches target source name."""
     norm_target = _normalize_source_name(target_source)
@@ -69,11 +84,23 @@ def is_chunk_relevant(
     doc: Document,
     target_sources: Sequence[str],
     contains: Optional[Sequence[str]] = None,
+    disallowed_distractors: Optional[Sequence[str]] = None,
 ) -> bool:
     """
     Check if a retrieved document chunk is relevant to the query.
     Requires source match AND contains phrase match (if contains specified).
+    A hit strictly requires an AUTHORITATIVE source; chunks matching distractor sources
+    are never counted as hits.
     """
+    if disallowed_distractors is None:
+        _, dist = get_manifest_sources()
+        disallowed_distractors = list(dist)
+
+    # If document originates from a distractor source, it is NOT an authoritative hit
+    if disallowed_distractors:
+        if any(doc_matches_source(doc, dist) for dist in disallowed_distractors):
+            return False
+
     source_match = any(doc_matches_source(doc, src) for src in target_sources)
     if not source_match:
         return False
@@ -360,4 +387,108 @@ def aggregate_split_metrics(
         summary[p_name] = p_summary
 
     return summary
+
+
+OFFICIAL_REPORT_FILENAMES = {
+    "rag_report.json",
+    "rrf_tuning_report.json",
+    "threshold_calibration_report.json",
+}
+
+
+def assert_not_mock_on_official_path(output_path: Path | str, mode: str) -> None:
+    """Raise ValueError if attempting to write a mock-mode report to an official report path."""
+    p = Path(output_path)
+    if mode.lower() == "mock":
+        if p.name in OFFICIAL_REPORT_FILENAMES and not p.name.endswith(".mock.json"):
+            raise ValueError(
+                f"Refusing to write mock report to official path: '{p}'. "
+                "Mock runs must write to a path ending in '.mock.json' (e.g., evals/results/rag_report.mock.json)."
+            )
+
+
+def compute_file_sha256(file_path: Path | str) -> str:
+    """Compute hex SHA-256 hash of a file."""
+    p = Path(file_path)
+    if not p.is_file():
+        return ""
+    import hashlib
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def get_git_commit() -> str:
+    """Retrieve current git commit hash if in a git repository."""
+    try:
+        import subprocess
+        res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+        return res.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def compute_wilson_score_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float, float]:
+    """
+    Compute Wilson score interval for a binomial proportion.
+    Returns (point_estimate, ci_lower_95, ci_upper_95).
+    """
+    if total == 0:
+        return 0.0, 0.0, 0.0
+    p_hat = successes / total
+    denom = 1.0 + (z**2) / total
+    center = (p_hat + (z**2) / (2.0 * total)) / denom
+    margin = (z / denom) * math.sqrt((p_hat * (1.0 - p_hat) / total) + (z**2) / (4.0 * (total**2)))
+    low = max(0.0, center - margin)
+    high = min(1.0, center + margin)
+    return round(p_hat, 4), round(low, 4), round(high, 4)
+
+
+def paired_bootstrap_difference(
+    scores_a: Sequence[float],
+    scores_b: Sequence[float],
+    n_resamples: int = 1000,
+    alpha: float = 0.05,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """
+    Compute paired bootstrap confidence interval for difference (scores_b - scores_a).
+    Returns mean_diff, ci_lower_95, ci_upper_95, significant flag, and plain-language conclusion.
+    """
+    assert len(scores_a) == len(scores_b), f"Length mismatch: {len(scores_a)} vs {len(scores_b)}"
+    n = len(scores_a)
+    if n == 0:
+        return {
+            "mean_diff": 0.0,
+            "ci_lower_95": 0.0,
+            "ci_upper_95": 0.0,
+            "significant": False,
+            "conclusion": "not significant",
+        }
+
+    diffs = [float(b - a) for a, b in zip(scores_a, scores_b)]
+    mean_diff = float(np.mean(diffs))
+
+    rng = np.random.RandomState(seed)
+    indices = np.arange(n)
+    boot_means = []
+    for _ in range(n_resamples):
+        sample_idx = rng.choice(indices, size=n, replace=True)
+        boot_means.append(float(np.mean([diffs[i] for i in sample_idx])))
+
+    low = float(np.percentile(boot_means, (alpha / 2.0) * 100))
+    high = float(np.percentile(boot_means, (1.0 - alpha / 2.0) * 100))
+    significant = bool((low > 0) or (high < 0))
+    conclusion = "significant" if significant else "not significant"
+
+    return {
+        "mean_diff": round(mean_diff, 4),
+        "ci_lower_95": round(low, 4),
+        "ci_upper_95": round(high, 4),
+        "significant": significant,
+        "conclusion": conclusion,
+    }
+
 

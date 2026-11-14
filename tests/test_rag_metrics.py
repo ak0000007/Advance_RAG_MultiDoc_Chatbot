@@ -287,3 +287,87 @@ def test_aggregate_split_metrics():
     assert all_summary["Dense"]["N"] == 2
     assert all_summary["Dense"]["hit@1"] == 0.5
 
+
+def test_distractor_source_rejection():
+    """Verify that chunks from distractor sources in data/manifest.json are strictly rejected as hits."""
+    from evals.rag.metrics import assert_not_mock_on_official_path, is_chunk_relevant
+
+    # Document originating from a known distractor file
+    distractor_doc = Document(
+        page_content="Per diem in the archived 2021 expense guidelines was $50 USD per calendar day.",
+        metadata={"source": "legacy_2021_expense_and_lodging_policy.txt"},
+    )
+    # Even if target_sources includes the distractor file and phrase matches, must return False
+    assert is_chunk_relevant(
+        distractor_doc,
+        target_sources=["legacy_2021_expense_and_lodging_policy.txt"],
+        contains=["$50 USD per calendar day"],
+    ) is False
+
+    # Authoritative doc with same phrase must be accepted
+    authoritative_doc = Document(
+        page_content="Domestic per diem is $75 per calendar day under active policy.",
+        metadata={"source": "business_meals_and_entertainment_rules.txt"},
+    )
+    assert is_chunk_relevant(
+        authoritative_doc,
+        target_sources=["business_meals_and_entertainment_rules.txt"],
+        contains=["$75 per calendar day"],
+    ) is True
+
+
+def test_assert_not_mock_on_official_path(tmp_path):
+    """Verify that mock runs are refused when directed to official paths."""
+    from evals.rag.metrics import assert_not_mock_on_official_path
+
+    # Official report path with mode="mock" must raise ValueError
+    with pytest.raises(ValueError, match="Refusing to write mock report to official path"):
+        assert_not_mock_on_official_path(tmp_path / "rag_report.json", mode="mock")
+
+    with pytest.raises(ValueError, match="Refusing to write mock report to official path"):
+        assert_not_mock_on_official_path(tmp_path / "rrf_tuning_report.json", mode="mock")
+
+    # Mock report path ending in .mock.json is allowed
+    assert_not_mock_on_official_path(tmp_path / "rag_report.mock.json", mode="mock")
+
+    # Live mode is allowed everywhere
+    assert_not_mock_on_official_path(tmp_path / "rag_report.json", mode="live")
+
+
+def test_paired_bootstrap_difference():
+    """Verify paired bootstrap difference arithmetic and significance testing."""
+    from evals.rag.metrics import paired_bootstrap_difference
+
+    # Identical performance -> mean diff 0.0, not significant
+    scores_a = [1.0, 1.0, 0.0, 1.0, 0.0]
+    res_ident = paired_bootstrap_difference(scores_a, scores_a, n_resamples=500, seed=42)
+    assert res_ident["mean_diff"] == 0.0
+    assert res_ident["significant"] is False
+    assert res_ident["conclusion"] == "not significant"
+
+    # Superior performance across 20 cases -> significant positive difference
+    scores_low = [0.0] * 20
+    scores_high = [1.0] * 20
+    res_diff = paired_bootstrap_difference(scores_low, scores_high, n_resamples=500, seed=42)
+    assert res_diff["mean_diff"] == 1.0
+    assert res_diff["ci_lower_95"] == 1.0
+    assert res_diff["ci_upper_95"] == 1.0
+    assert res_diff["significant"] is True
+    assert res_diff["conclusion"] == "significant"
+
+
+def test_wilson_score_interval():
+    """Verify Wilson score confidence interval computation."""
+    from evals.rag.metrics import compute_wilson_score_interval
+
+    p, low, high = compute_wilson_score_interval(successes=10, total=10)
+    assert p == 1.0
+    assert 0.69 <= low <= 1.0
+    assert high == 1.0
+
+    p, low, high = compute_wilson_score_interval(successes=0, total=10)
+    assert p == 0.0
+    assert low == 0.0
+    assert 0.0 <= high <= 0.31
+
+

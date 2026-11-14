@@ -295,29 +295,37 @@ python -m evals.rag.runner --mock
 ```
 
 <!-- RAG_RESULTS_START -->
-#### Empirical Retrieval Benchmark Results (Mode: LIVE, N=35 cases: 28 answerable, 7 unanswerable)
+#### Empirical Retrieval Benchmark Results (Status: PENDING LIVE BENCHMARK EXECUTION)
 
-| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | MRR | nDCG@5 | Median (s) | P95 (s) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Dense Only** | 0.821 | 1.000 | 1.000 | 0.911 | 0.913 | 4.9060 | 7.4095 |
-| **BM25 Only** | 0.750 | 0.893 | 0.964 | 0.839 | 0.805 | 0.0004 | 0.0399 |
-| **Hybrid (RRF)** | 0.750 | 1.000 | 1.000 | 0.875 | 0.893 | 0.3698 | 1.3955 |
-| **Hybrid + Rerank** | 0.750 | 1.000 | 1.000 | 0.875 | 0.901 | 20.9268 | 27.8963 |
+> [!IMPORTANT]
+> **PENDING: run `python -m evals.rag.runner` on GPU**
+> The evaluation dataset has been expanded to **162 verified cases** (114 answerable across 7 categories, 48 unanswerable near-misses and out-of-scope queries) over 24 documents (16 authoritative policies, 8 distractors cataloged in `data/manifest.json`).
+> In accordance with project integrity ground rules, metrics are never fabricated or estimated. Run the live GPU evaluation via Google Colab (`notebooks/colab_rag_benchmark.ipynb`) or on a CUDA-enabled machine to populate official benchmark numbers.
 
-> [!NOTE]
-> **Sample Size & Statistical Significance**:
-> Evaluated on 28 answerable benchmark cases (and 7 unanswerable abstention tests). With small samples, a single case represents ~3.5% of Hit@1. Dense achieves higher Hit@1 on broad semantic phrasing, while Hybrid matches on Top-3 and Top-5 Recall (100%) while guaranteeing exact token retention (IDs, per diems) via BM25.
+| Retrieval Pipeline | Hit@1 | Hit@3 | Hit@5 | Recall@5 | MRR | nDCG@5 | Median (s) | P95 (s) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Dense Only** | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* |
+| **BM25 Only** | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* |
+| **Hybrid (RRF)** | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* |
+| **Hybrid + Rerank** | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* | *PENDING* |
 
-#### Per-Category Retrieval Breakdown
+#### Execution Commands
+To generate live reports and update this table:
+```bash
+# 1. Ingest corpus
+python ingest.py --recreate
 
+# 2. Run live benchmark (GPU recommended)
+python -m evals.rag.runner --repeats 3 --seed 0
 
+# 3. Run RRF grid tuning & threshold calibration
+python scripts/tune_rrf.py
+python scripts/calibrate_threshold.py --signal dense_cosine --max-false-abstention 0.05
 
-#### Component-Level Latency Breakdown
-
-- **Environment**: Device = CPU (CPU) | Repeats = 1 | Seed = 0
-- **Status**: GPU latency not measured (evaluated on CPU)
-
-*Generated automatically from `evals/results/rag_report.json` (Timestamp: `2026-11-14T09:54:34.988641+00:00`). Do not edit manually.*
+# 4. Sync README and verify
+python scripts/render_readme_tables.py
+python scripts/check_readme_sync.py
+```
 <!-- RAG_RESULTS_END -->
 
 ### 4. Reranker Diagnostic Inspection

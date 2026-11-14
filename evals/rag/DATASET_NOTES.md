@@ -1,7 +1,7 @@
 # RAG Evaluation Dataset Notes
 
 ## Overview
-The evaluation dataset in [`evals/rag/rag_dataset.jsonl`](rag_dataset.jsonl) comprises **138 test cases** (114 answerable, 24 unanswerable) designed to rigorously benchmark hybrid retrieval, dense vector search, sparse BM25, and cross-encoder reranking over enterprise travel policy documents.
+The evaluation dataset in [`evals/rag/rag_dataset.jsonl`](rag_dataset.jsonl) comprises **162 test cases** (114 answerable, 48 unanswerable) designed to rigorously benchmark hybrid retrieval, dense vector search, sparse BM25, and cross-encoder reranking over enterprise travel policy documents.
 
 Corpus files are cataloged in [`data/manifest.json`](../../data/manifest.json), comprising:
 - **16 Authoritative Documents**: Active travel policies, expense caps, booking rules, executive protocols, insurance coverage, and safari guidelines.
@@ -27,7 +27,7 @@ The dataset is split into **dev** (50%) and **heldout** (50%) partitions using a
 | `exact_figure` | 16 (8 / 8) | Queries focused on exact numerical values, per diem breakdowns ($15/$25/$35), hotel caps (320 SGD, 180 GBP), and timeline windows. |
 | `negation_edge` | 16 (8 / 8) | Queries assessing negative constraints, prohibitions, and exclusions (e.g., prohibition of alcohol during solo meals, hard-shell suitcase bans, C-suite flight separation). |
 | `near_duplicate_trap` | 16 (8 / 8) | Queries comparing current 2024 policies against superseded legacy policies (2021 expense cap vs 2024 cap) or adjacent tiers (budget vs luxury safari). Tests whether the retriever distinguishes the authoritative document from topically similar distractors. |
-| `unanswerable` | 24 (12 / 12) | Out-of-scope inquiries (e.g., lunar shuttle codes, pet pythons, cryptocurrency reimbursements, personal acupuncture) testing system abstention and hallucination prevention. |
+| `unanswerable` | 48 (24 / 24) | Out-of-scope inquiries (e.g., lunar shuttle codes, pet pythons, cryptocurrency reimbursements, personal acupuncture, scuba diving, pet relocation, IT password reset, corporate CPQ discounts) testing system abstention and hallucination prevention. |
 
 ---
 

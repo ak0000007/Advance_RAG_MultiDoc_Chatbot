@@ -57,3 +57,48 @@ def test_hybrid_retriever_min_score_integration():
     )
     empty_results = hybrid_strict.search("travel policy")
     assert empty_results == []
+
+
+def test_calibrate_threshold_optimization_and_guards(tmp_path):
+    """Verify calibrate_threshold DEV sweep constraint and refusal guard."""
+    from scripts.calibrate_threshold import calibrate_threshold
+    import pytest
+
+    # Create dummy JSONL dataset
+    fake_dataset = tmp_path / "test_dataset.jsonl"
+    cases = [
+        {"id": "c1", "split": "dev", "query": "q1", "is_unanswerable": False, "category": "single_doc", "relevant_sources": ["a.txt"], "contains": ["x"]},
+        {"id": "c2", "split": "dev", "query": "q2", "is_unanswerable": True, "category": "unanswerable", "relevant_sources": [], "contains": []},
+        {"id": "c3", "split": "heldout", "query": "q3", "is_unanswerable": False, "category": "single_doc", "relevant_sources": ["a.txt"], "contains": ["x"]},
+        {"id": "c4", "split": "heldout", "query": "q4", "is_unanswerable": True, "category": "unanswerable", "relevant_sources": [], "contains": []},
+    ]
+    with fake_dataset.open("w", encoding="utf-8") as f:
+        for c in cases:
+            import json
+            f.write(json.dumps(c) + "\n")
+
+    # Run calibration to mock destination
+    mock_out = tmp_path / "threshold.mock.json"
+    rep = calibrate_threshold(
+        dataset_path=fake_dataset,
+        output_path=mock_out,
+        signal="dense_cosine",
+        max_false_abstention=0.05,
+        mock_mode=True,
+    )
+
+    assert "optimal_threshold" in rep
+    assert "true_abstention_wilson_95" in rep["heldout_performance"]
+    assert "false_abstention_wilson_95" in rep["heldout_performance"]
+    assert rep["mode"] == "mock"
+
+    # Official path rejection
+    official_out = tmp_path / "threshold_calibration_report.json"
+    with pytest.raises(ValueError, match="Refusing to write mock report to official path"):
+        calibrate_threshold(
+            dataset_path=fake_dataset,
+            output_path=official_out,
+            signal="dense_cosine",
+            mock_mode=True,
+        )
+

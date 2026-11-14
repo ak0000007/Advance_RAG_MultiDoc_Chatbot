@@ -65,9 +65,40 @@ def generate_results_block(report: dict) -> str:
         for k, v in comp_latencies.items():
             lines.append(f"  - `{k}`: {v.get('median_sec', 0.0):.4f}s median, {v.get('p95_sec', 0.0):.4f}s P95")
 
+    paired = report.get("paired_comparisons", {})
+    if paired:
+        lines.extend([
+            "",
+            "#### Paired Pipeline Differences & Statistical Significance (95% Bootstrap CI)",
+            "",
+            "| Comparison | Metric | Mean Difference | 95% Bootstrap CI | Statistical Conclusion |",
+            "| :--- | :---: | :---: | :---: | :--- |",
+        ])
+        for comp_name, m_dict in paired.items():
+            for m_name, res in m_dict.items():
+                m_diff = res.get("mean_diff", 0.0)
+                low = res.get("ci_lower_95", 0.0)
+                high = res.get("ci_upper_95", 0.0)
+                conc = res.get("conclusion", "not significant")
+                lines.append(f"| **{comp_name}** | {m_name} | {m_diff:+.4f} | [{low:+.4f}, {high:+.4f}] | {conc.capitalize()} |")
+
+    audit = report.get("matching_audit", {})
+    if audit:
+        lines.extend([
+            "",
+            "#### Metric Strictness & Matching Audit",
+            "",
+            f"- **Authoritative Corpus Grounding**: Catalog contains {audit.get('authoritative_sources_count', 16)} authoritative policies and {audit.get('distractor_sources_count', 8)} distractor documents.",
+            f"- **Gold Target Matching**: {audit.get('cases_using_contains', 0)} of {ans} answerable cases require verified verbatim phrase matches in addition to source alignment.",
+            "- **Distractor Protection**: Chunks originating from distractor documents are strictly barred from counting as retrieval hits.",
+        ])
+
+    git_commit = report.get("git_commit") or meta.get("git_commit", "unknown")
+    commit_str = git_commit[:8] if git_commit and git_commit != "unknown" else "unknown"
+
     lines.extend([
         "",
-        f"*Generated automatically from `evals/results/rag_report.json` (Timestamp: `{ts}`). Do not edit manually.*",
+        f"*Generated automatically from `evals/results/rag_report.json` (Timestamp: `{ts}`, Commit: `{commit_str}`). Do not edit manually.*",
         END_MARKER,
     ])
 

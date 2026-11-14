@@ -18,8 +18,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from evals.rag.metrics import (
+    assert_not_mock_on_official_path,
     bootstrap_confidence_interval,
+    compute_file_sha256,
     evaluate_retrieval_case,
+    get_git_commit,
+    paired_bootstrap_difference,
 )
 from evals.rag.runner import build_live_retrievers, build_mock_retrievers, load_dataset
 from src.retrieval.hybrid_retriever import reciprocal_rank_fusion
@@ -58,8 +62,8 @@ def tune_rrf(
         dense_docs, sparse_docs = _fetch_candidates(c["query"])
         dev_pools.append((c, dense_docs, sparse_docs))
 
-    # Grid search parameters
-    weights_candidates = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    # Grid search parameters (Task C: dense weights 0.5 to 2.0, k in 10, 30, 60)
+    weights_candidates = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.25, 1.5, 2.0]
     k_candidates = [10, 30, 60]
 
     grid_results = []
@@ -118,44 +122,69 @@ def tune_rrf(
         best_dev_metrics["dev_mrr"],
     )
 
-    # Evaluate optimal configuration on HELDOUT split
-    logger.info("Evaluating optimal configuration on HELDOUT split (%d cases)...", len(heldout_cases))
-    heldout_hit1 = []
-    heldout_hit3 = []
-    heldout_hit5 = []
-    heldout_recall5 = []
-    heldout_mrr = []
-    heldout_ndcg5 = []
+    # Evaluate Tuned, Default (1.0, 1.0, 60), and Dense-Only on HELDOUT split
+    logger.info("Evaluating Tuned, Default, and Dense-Only configs on HELDOUT split (%d cases)...", len(heldout_cases))
+
+    tuned_hit1, tuned_hit3, tuned_hit5, tuned_recall5, tuned_mrr, tuned_ndcg5 = [], [], [], [], [], []
+    default_hit1, default_ndcg5 = [], []
+    dense_hit1, dense_ndcg5 = [], []
 
     for c in heldout_cases:
         dense_docs, sparse_docs = _fetch_candidates(c["query"])
-        fused = reciprocal_rank_fusion(
+
+        # 1. Tuned config
+        fused_tuned = reciprocal_rank_fusion(
             [dense_docs, sparse_docs],
             k=best_rrf_k,
             weights=[best_w_dense, 1.0],
         )
-        m = evaluate_retrieval_case(
-            fused[:20],
+        m_tuned = evaluate_retrieval_case(
+            fused_tuned[:20],
             relevant_sources=c.get("relevant_sources", []),
             contains=c.get("contains", []),
             k_values=(1, 3, 5),
         )
-        heldout_hit1.append(m["hit@1"])
-        heldout_hit3.append(m["hit@3"])
-        heldout_hit5.append(m["hit@5"])
-        heldout_recall5.append(m["recall@5"])
-        heldout_mrr.append(m["mrr"])
-        heldout_ndcg5.append(m["ndcg@5"])
+        tuned_hit1.append(m_tuned["hit@1"])
+        tuned_hit3.append(m_tuned["hit@3"])
+        tuned_hit5.append(m_tuned["hit@5"])
+        tuned_recall5.append(m_tuned["recall@5"])
+        tuned_mrr.append(m_tuned["mrr"])
+        tuned_ndcg5.append(m_tuned["ndcg@5"])
+
+        # 2. Default baseline config (w_dense=1.0, w_sparse=1.0, rrf_k=60)
+        fused_default = reciprocal_rank_fusion(
+            [dense_docs, sparse_docs],
+            k=60,
+            weights=[1.0, 1.0],
+        )
+        m_default = evaluate_retrieval_case(
+            fused_default[:20],
+            relevant_sources=c.get("relevant_sources", []),
+            contains=c.get("contains", []),
+            k_values=(1, 3, 5),
+        )
+        default_hit1.append(m_default["hit@1"])
+        default_ndcg5.append(m_default["ndcg@5"])
+
+        # 3. Dense-only reference
+        m_dense = evaluate_retrieval_case(
+            dense_docs[:20],
+            relevant_sources=c.get("relevant_sources", []),
+            contains=c.get("contains", []),
+            k_values=(1, 3, 5),
+        )
+        dense_hit1.append(m_dense["hit@1"])
+        dense_ndcg5.append(m_dense["ndcg@5"])
 
     # Compute 95% bootstrap confidence intervals for heldout evaluation
     heldout_summary = {}
     metric_map = {
-        "hit@1": heldout_hit1,
-        "hit@3": heldout_hit3,
-        "hit@5": heldout_hit5,
-        "recall@5": heldout_recall5,
-        "mrr": heldout_mrr,
-        "ndcg@5": heldout_ndcg5,
+        "hit@1": tuned_hit1,
+        "hit@3": tuned_hit3,
+        "hit@5": tuned_hit5,
+        "recall@5": tuned_recall5,
+        "mrr": tuned_mrr,
+        "ndcg@5": tuned_ndcg5,
     }
     for k_name, vals in metric_map.items():
         mean_v, low, high = bootstrap_confidence_interval(vals, n_resamples=1000, seed=seed)
@@ -165,11 +194,40 @@ def tune_rrf(
             "ci_upper_95": high,
         }
 
+    # Paired bootstrap differences on heldout
+    diff_tuned_vs_default_hit1 = paired_bootstrap_difference(default_hit1, tuned_hit1, seed=seed)
+    diff_tuned_vs_default_ndcg = paired_bootstrap_difference(default_ndcg5, tuned_ndcg5, seed=seed)
+    diff_tuned_vs_dense_hit1 = paired_bootstrap_difference(dense_hit1, tuned_hit1, seed=seed)
+    diff_tuned_vs_dense_ndcg = paired_bootstrap_difference(dense_ndcg5, tuned_ndcg5, seed=seed)
+
+    if diff_tuned_vs_default_ndcg["significant"] and diff_tuned_vs_default_ndcg["mean_diff"] > 0:
+        conclusion = "adopt tuned config: statistically significant improvement over default on held-out split"
+        recommend_adoption = True
+    else:
+        conclusion = "keep default (w_dense=1.0, w_sparse=1.0, rrf_k=60): tuning difference on held-out split is within statistical noise"
+        recommend_adoption = False
+
+    dataset_sha256 = compute_file_sha256(dataset_path)
+    corpus_manifest_sha256 = compute_file_sha256("data/manifest.json")
+    git_commit = get_git_commit()
+    mode_str = "mock" if mock_mode else "live"
+
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "mode": "mock" if mock_mode else "live",
+        "mode": mode_str,
+        "dataset_path": str(dataset_path),
+        "dataset_sha256": dataset_sha256,
+        "dataset_total_cases": len(cases),
+        "corpus_manifest_sha256": corpus_manifest_sha256,
+        "git_commit": git_commit,
+        "seed": seed,
         "dev_cases_count": len(dev_cases),
         "heldout_cases_count": len(heldout_cases),
+        "default_config": {
+            "w_dense": 1.0,
+            "w_sparse": 1.0,
+            "rrf_k": 60,
+        },
         "optimal_config": {
             "w_dense": best_w_dense,
             "w_sparse": 1.0,
@@ -177,9 +235,22 @@ def tune_rrf(
         },
         "dev_performance": best_dev_metrics,
         "heldout_performance": heldout_summary,
+        "heldout_comparisons": {
+            "tuned_vs_default": {
+                "hit@1": diff_tuned_vs_default_hit1,
+                "ndcg@5": diff_tuned_vs_default_ndcg,
+            },
+            "tuned_vs_dense": {
+                "hit@1": diff_tuned_vs_dense_hit1,
+                "ndcg@5": diff_tuned_vs_dense_ndcg,
+            },
+        },
+        "recommendation": conclusion,
+        "recommend_adoption": recommend_adoption,
         "grid_search_history": grid_results,
     }
 
+    assert_not_mock_on_official_path(output_path, mode_str)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
@@ -191,15 +262,18 @@ def tune_rrf(
 def main():
     parser = argparse.ArgumentParser(description="Tune RRF weights on DEV split and report on HELDOUT split")
     parser.add_argument("--dataset", type=str, default="evals/rag/rag_dataset.jsonl")
-    parser.add_argument("--output", type=str, default="evals/results/rrf_tuning_report.json")
+    parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--mock", action="store_true", help="Run with mock retrievers")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--seed", type=int, default=42)
 
     args = parser.parse_args()
+    dest = Path(args.output) if args.output else (
+        Path("evals/results/rrf_tuning_report.mock.json") if args.mock else Path("evals/results/rrf_tuning_report.json")
+    )
     tune_rrf(
         dataset_path=Path(args.dataset),
-        output_path=Path(args.output),
+        output_path=dest,
         mock_mode=args.mock,
         device=args.device,
         seed=args.seed,

@@ -39,8 +39,14 @@ from langchain_core.documents import Document
 from evals.rag.metrics import (
     aggregate_category_metrics,
     aggregate_split_metrics,
+    assert_not_mock_on_official_path,
+    compute_file_sha256,
+    doc_matches_source,
     evaluate_retrieval_case,
     format_category_markdown_table,
+    get_git_commit,
+    get_manifest_sources,
+    paired_bootstrap_difference,
 )
 
 logger = logging.getLogger(__name__)
@@ -305,10 +311,16 @@ def evaluate_llm_judge(
             "faithfulness": faithfulness_score,
             "abstention": abstention_score,
             "false_abstention": false_abstention_score,
+            "generated_answer": text,
         }
     except Exception as exc:
         logger.warning("LLM Judge evaluation failed: %s", exc)
-        return {"faithfulness": 0.0, "abstention": 0.0, "false_abstention": 0.0}
+        return {
+            "faithfulness": 0.0,
+            "abstention": 0.0,
+            "false_abstention": 0.0,
+            "generated_answer": "",
+        }
 
 
 def run_evaluation(
@@ -475,10 +487,16 @@ def run_evaluation(
             else:
                 metrics = None
 
+            top1_source = None
+            if docs:
+                meta_top = getattr(docs[0], "metadata", {}) or {}
+                top1_source = meta_top.get("source") or meta_top.get("file_name")
+
             case_perf = {
                 "metrics": metrics,
                 "latency_sec": round(med_elapsed, 4),
                 "num_retrieved": len(docs),
+                "top1_source": top1_source,
             }
 
             if use_judge:
@@ -577,12 +595,71 @@ def run_evaluation(
         if device_str.startswith("cuda") and torch.cuda.is_available()
         else platform.processor() or "CPU"
     )
+
+    # Paired Bootstrap Differences between Pipelines
+    dense_scores = pipeline_scores.get("Dense Only", {})
+    hybrid_scores = pipeline_scores.get("Hybrid (RRF)", {})
+    rerank_scores = pipeline_scores.get("Hybrid + Rerank", {})
+
+    paired_comparisons: dict[str, Any] = {}
+    if dense_scores.get("hit@1") and hybrid_scores.get("hit@1"):
+        paired_comparisons["Dense_vs_Hybrid"] = {
+            "hit@1": paired_bootstrap_difference(dense_scores["hit@1"], hybrid_scores["hit@1"], seed=seed),
+            "ndcg@5": paired_bootstrap_difference(dense_scores["ndcg@5"], hybrid_scores["ndcg@5"], seed=seed),
+        }
+    if hybrid_scores.get("hit@1") and rerank_scores.get("hit@1"):
+        paired_comparisons["Hybrid_vs_Rerank"] = {
+            "hit@1": paired_bootstrap_difference(hybrid_scores["hit@1"], rerank_scores["hit@1"], seed=seed),
+            "ndcg@5": paired_bootstrap_difference(hybrid_scores["ndcg@5"], rerank_scores["ndcg@5"], seed=seed),
+        }
+
+    # Strictness & Matching Audit
+    auth_sources, dist_sources = get_manifest_sources()
+    cases_source_only = sum(1 for c in answerable_cases if not c.get("contains"))
+    cases_contains = sum(1 for c in answerable_cases if c.get("contains"))
+
+    distractor_top1_by_pipeline = {
+        p_name: {"near_duplicate_trap": 0, "exact_id": 0, "total": 0}
+        for p_name in pipeline_names
+    }
+    for c_dict in case_details:
+        cat = c_dict.get("category")
+        if cat in ("near_duplicate_trap", "exact_id"):
+            for p_name in pipeline_names:
+                p_res = c_dict.get("results", {}).get(p_name, {})
+                top1_src = p_res.get("top1_source")
+                if top1_src:
+                    norm_src = Path(str(top1_src)).name.lower()
+                    if norm_src in dist_sources:
+                        distractor_top1_by_pipeline[p_name][cat] += 1
+                        distractor_top1_by_pipeline[p_name]["total"] += 1
+
+    matching_audit = {
+        "cases_relying_on_source_only": cases_source_only,
+        "cases_using_contains": cases_contains,
+        "authoritative_sources_count": len(auth_sources),
+        "distractor_sources_count": len(dist_sources),
+        "distractor_top1_by_pipeline": distractor_top1_by_pipeline,
+        "authoritative_source_enforced": True,
+    }
+
+    dataset_sha256 = compute_file_sha256(dataset_path)
+    corpus_manifest_sha256 = compute_file_sha256("data/manifest.json")
+    git_commit = get_git_commit()
+    corpus_chunk_count = components.get("corpus_chunk_count", 0)
+
     metadata = {
         "device": device_str,
         "device_name": device_name,
         "embedding_model": "BAAI/bge-m3" if not mock_mode else "mock-embedding",
         "reranker_model": "BAAI/bge-reranker-v2-m3" if not mock_mode else "mock-reranker",
-        "corpus_chunks_count": components.get("corpus_chunk_count", 0),
+        "corpus_chunks_count": corpus_chunk_count,
+        "corpus_chunk_count": corpus_chunk_count,
+        "corpus_manifest_sha256": corpus_manifest_sha256,
+        "dataset_sha256": dataset_sha256,
+        "dataset_total_cases": len(cases),
+        "git_commit": git_commit,
+        "mode": mode,
         "seed": seed,
         "repeats": repeats,
         "component_latencies": component_summary,
@@ -594,6 +671,11 @@ def run_evaluation(
         "mode": mode,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "dataset_path": str(dataset_path),
+        "dataset_sha256": dataset_sha256,
+        "dataset_total_cases": len(cases),
+        "corpus_manifest_sha256": corpus_manifest_sha256,
+        "corpus_chunk_count": corpus_chunk_count,
+        "git_commit": git_commit,
         "split_filter": split_filter,
         "total_cases": len(cases),
         "answerable_cases": len(answerable_cases),
@@ -604,15 +686,65 @@ def run_evaluation(
         "dev_summary": dev_summary,
         "heldout_summary": heldout_summary,
         "overall_split_summary": overall_split_summary,
+        "paired_comparisons": paired_comparisons,
+        "matching_audit": matching_audit,
         "markdown_table": markdown_table,
         "category_summary": category_summary,
         "category_markdown_table": category_markdown_table,
         "case_details": case_details,
     }
 
+    assert_not_mock_on_official_path(output_path, mode)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report_payload, f, indent=2)
+
+    if use_judge:
+        import csv
+        csv_filename = "judge_spot_check.mock.csv" if mock_mode else "judge_spot_check.csv"
+        csv_path = Path("evals/results") / csv_filename
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+        rng_csv = random.Random(seed)
+        ans_indices = [i for i, c in enumerate(case_details) if not c.get("is_unanswerable")]
+        unans_indices = [i for i, c in enumerate(case_details) if c.get("is_unanswerable")]
+        sample_ans = rng_csv.sample(ans_indices, min(10, len(ans_indices)))
+        sample_unans = rng_csv.sample(unans_indices, min(10, len(unans_indices)))
+        selected_indices = sorted(sample_ans + sample_unans)
+
+        with open(csv_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "case_id",
+                "split",
+                "category",
+                "query",
+                "retrieved_context_preview",
+                "generated_answer",
+                "judge_faithfulness",
+                "judge_abstention",
+                "human_verified_label",
+                "comments",
+            ])
+            for s_idx in selected_indices:
+                cd = case_details[s_idx]
+                p_res = cd.get("results", {}).get("Hybrid + Rerank") or list(cd.get("results", {}).values())[0]
+                j_info = p_res.get("judge") or {}
+                top1_src = p_res.get("top1_source") or ""
+                ans_text = j_info.get("generated_answer", "")
+                writer.writerow([
+                    cd.get("id"),
+                    cd.get("split"),
+                    cd.get("category"),
+                    cd.get("query"),
+                    top1_src,
+                    ans_text,
+                    j_info.get("faithfulness", ""),
+                    j_info.get("abstention", ""),
+                    "",
+                    "",
+                ])
+        logger.info("Judge spot check CSV exported to %s", csv_path)
 
     print("\n" + "=" * 76)
     print(f"        RAG RETRIEVAL EVALUATION REPORT (Mode: {mode.upper()})")
