@@ -480,12 +480,16 @@ async def _stream_graph_events(graph, inputs, config: dict, thread_id: str):
 
             # 1. Incremental Chat Model Tokens
             if kind == "on_chat_model_stream":
-                # Skip structured router outputs (e.g. classify_intent JSON)
-                if node == "classify_intent":
+                # Only stream tokens from the conversational agent node (ignore router, tools, graders, rewriters)
+                if node != "agent":
                     continue
 
                 chunk = event.get("data", {}).get("chunk")
                 if chunk is not None:
+                    # Skip tool call chunks (function calling fragments)
+                    if getattr(chunk, "tool_call_chunks", None):
+                        continue
+
                     content = getattr(chunk, "content", None)
                     text = ""
                     if isinstance(content, str):
@@ -505,6 +509,7 @@ async def _stream_graph_events(graph, inputs, config: dict, thread_id: str):
             # 2. Tool Start Progress
             elif kind == "on_tool_start":
                 tool_name = event.get("name", "tool")
+                accumulated_answer.clear()
                 payload = json.dumps({
                     "event": "status",
                     "stage": "tool_start",

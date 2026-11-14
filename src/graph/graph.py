@@ -229,7 +229,8 @@ def build_rag_graph(
         for msg in messages:
             content = getattr(msg, "content", "")
             if isinstance(content, str) and "<document" in content:
-                citations.extend(extract_citations_from_text(content))
+                if "Note: Relevance of these documents could not be fully confirmed." not in content:
+                    citations.extend(extract_citations_from_text(content))
 
         if citations and isinstance(tool_result, dict):
             existing = state.get("citations") or []

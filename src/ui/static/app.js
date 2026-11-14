@@ -355,6 +355,16 @@ async function sendChat(question) {
         setThread(data.thread_id ?? threadId);
         if (!bubble && data.answer) {
           bubble = addMessage('assistant', data.answer);
+        } else if (bubble && data.answer) {
+          if (window.marked) {
+            try {
+              bubble.innerHTML = marked.parse(data.answer);
+            } catch {
+              bubble.textContent = data.answer;
+            }
+          } else {
+            bubble.textContent = data.answer;
+          }
         }
         if (data.citations && data.citations.length > 0) {
           renderCitations(bubble, data.citations);
@@ -440,6 +450,17 @@ async function sendResume(decision) {
         removeTypingIndicator();
         if (!bubble && data.answer) {
           bubble = addMessage('assistant', `**[${decision}]** — ${data.answer}`);
+        } else if (bubble && data.answer) {
+          const finalMarkup = `**[${decision}]** — ${data.answer}`;
+          if (window.marked) {
+            try {
+              bubble.innerHTML = marked.parse(finalMarkup);
+            } catch {
+              bubble.textContent = finalMarkup;
+            }
+          } else {
+            bubble.textContent = finalMarkup;
+          }
         }
         if (data.citations && data.citations.length > 0) {
           renderCitations(bubble, data.citations);

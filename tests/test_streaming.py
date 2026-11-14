@@ -248,3 +248,128 @@ def test_chat_stream_error_handling():
     finally:
         app.dependency_overrides.pop(get_active_graph, None)
 
+
+def test_chat_stream_skips_tool_internal_llm_and_grading_tokens():
+    """
+    Verify /chat/stream strictly suppresses internal LLM tokens from tools,
+    such as CRAG chunk relevance graders and query rewriters, emitting only
+    the final agent tokens.
+    """
+    events = [
+        # 1. Intent classifier (should be skipped)
+        {
+            "event": "on_chat_model_stream",
+            "name": "ChatModel",
+            "metadata": {"langgraph_node": "classify_intent"},
+            "data": {"chunk": AIMessageChunk(content='{"domain": "docs"}')},
+        },
+        # 2. Agent decides to call search_documents with tool_call_chunks (should be skipped)
+        {
+            "event": "on_chat_model_stream",
+            "name": "ChatModel",
+            "metadata": {"langgraph_node": "agent"},
+            "data": {
+                "chunk": AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[{"name": "search_documents", "args": '{"query": "leave policy"}'}],
+                )
+            },
+        },
+        # 3. Tool execution starts
+        {
+            "event": "on_tool_start",
+            "name": "search_documents",
+            "data": {"input": {"query": "leave policy"}},
+        },
+        # 4. Internal CRAG chunk grader output inside tools (MUST be skipped)
+        {
+            "event": "on_chat_model_stream",
+            "name": "ChatModel",
+            "metadata": {"langgraph_node": "tools"},
+            "data": {"chunk": AIMessageChunk(content='{"relevant": false, "reason": "unrelated travel policy"}')},
+        },
+        # 5. Internal rewriter chain output inside tools (MUST be skipped)
+        {
+            "event": "on_chat_model_stream",
+            "name": "ChatModel",
+            "metadata": {"langgraph_node": "tools"},
+            "data": {"chunk": AIMessageChunk(content="leave policy time off vacation PTO guidelines")},
+        },
+        # 6. Tool execution ends
+        {
+            "event": "on_tool_end",
+            "name": "search_documents",
+            "data": {"output": "No relevant documents found"},
+        },
+        # 7. Final agent response to user (MUST be streamed)
+        {
+            "event": "on_chat_model_stream",
+            "name": "ChatModel",
+            "metadata": {"langgraph_node": "agent"},
+            "data": {"chunk": AIMessageChunk(content="I couldn't find specific information regarding leave policies.")},
+        },
+    ]
+
+    mock_graph = MockGraphStreaming(
+        events_to_emit=events,
+        final_values={"answer": "I couldn't find specific information regarding leave policies."},
+    )
+    app.dependency_overrides[get_active_graph] = lambda: mock_graph
+
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/chat/stream",
+            json={"question": "Whats is the leave policy", "thread_id": "thread-stream-crag-1"},
+        )
+        assert response.status_code == 200
+
+        parsed = _parse_sse_response(response.text)
+        token_events = [e for e in parsed if e["event"] == "token"]
+
+        # Only exactly ONE token event from the agent should be emitted!
+        assert len(token_events) == 1
+        assert token_events[0]["data"]["chunk"] == "I couldn't find specific information regarding leave policies."
+
+        # Verify NO JSON grader strings or query rewriter queries were leaked into tokens
+        for te in token_events:
+            chunk = te["data"]["chunk"]
+            assert "relevant" not in chunk
+            assert "classify_intent" not in chunk
+            assert "vacation PTO" not in chunk
+
+        done_events = [e for e in parsed if e["event"] == "done"]
+        assert len(done_events) == 1
+        assert done_events[0]["data"]["answer"] == "I couldn't find specific information regarding leave policies."
+    finally:
+        app.dependency_overrides.pop(get_active_graph, None)
+
+
+def test_unconfirmed_documents_not_emitted_as_citations():
+    """
+    Verify that when document retrieval cannot confirm relevance, fallback chunks
+    are NOT extracted as valid citations in extract_citations_from_messages.
+    """
+    from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
+    from src.retrieval.citations import extract_citations_from_messages
+
+    messages = [
+        HumanMessage(content="Whats is the leave policy"),
+        AIMessage(content="", tool_calls=[{"name": "search_documents", "args": {"query": "leave policy"}, "id": "tc-1"}]),
+        ToolMessage(
+            name="search_documents",
+            content=(
+                "Note: Relevance of these documents could not be fully confirmed.\n\n"
+                '<document id="doc-unrelated-1" source="travel_policy.txt" title="Travel Policy" page="1">\n'
+                "Airline tickets and travel vouchers...\n"
+                "</document>"
+            ),
+            tool_call_id="tc-1",
+        ),
+        AIMessage(content="I couldn't find specific information regarding leave policies in the internal knowledge base."),
+    ]
+
+    citations = extract_citations_from_messages(messages, current_turn_only=True)
+    assert citations == []
+
+

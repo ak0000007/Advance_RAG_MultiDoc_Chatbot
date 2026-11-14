@@ -200,6 +200,9 @@ def extract_citations_from_messages(
             text = "".join(texts)
 
         if "<document" in text:
+            # If the tool explicitly noted that relevance could not be confirmed, do not treat fallback context as verified citations
+            if "Note: Relevance of these documents could not be fully confirmed." in text:
+                continue
             for citation in extract_citations_from_text(text):
                 cid = citation.get("chunk_id")
                 if cid and cid not in seen_ids:
