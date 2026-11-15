@@ -21,14 +21,17 @@ Agent Node ──(if tool needed)──> Tool Node
 """
 
 import json
-from typing import Literal, Optional
+import logging
+from typing import Literal, Optional, Any
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, trim_messages
 from langchain_core.runnables import RunnableConfig
 
 from src.graph.state import RAGState
 from src.retrieval.citations import extract_citations_from_text
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """You are an intelligent travel enterprise assistant.
@@ -87,6 +90,63 @@ def _after_tool_router(state: RAGState) -> Literal["human_approval", "agent"]:
     return "agent"
 
 
+def safe_trim_messages(
+    messages: list[Any],
+    max_messages: int = 50,
+    system_prompt: str = SYSTEM_PROMPT,
+    summary: Optional[str] = None,
+) -> list[Any]:
+    """
+    Safely trim message history for LLM invocation while preserving conversation integrity:
+    1. If max_messages <= 0 or len(messages) <= max_messages, return all messages with system prompt.
+    2. Use trim_messages with strategy='last' and start_on='human' to avoid starting on orphaned Tool/AI messages.
+    3. Ensure the current active turn (from latest HumanMessage onward) is never truncated.
+    4. Prepend system prompt and optional summary.
+    """
+    if not messages or max_messages <= 0 or len(messages) <= max_messages:
+        invoke = [SystemMessage(content=system_prompt)]
+        if summary:
+            invoke.append(SystemMessage(content=f"Summary of prior conversation:\n{summary}"))
+        return invoke + list(messages)
+
+    # Trim to last max_messages with start_on='human'
+    trimmed = trim_messages(
+        messages,
+        max_tokens=max_messages,
+        token_counter=len,
+        strategy="last",
+        start_on="human",
+    )
+
+    # Active turn preservation guard: locate the latest human message
+    last_human_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if getattr(msg, "type", "") in ("human", "user") or isinstance(msg, HumanMessage):
+            last_human_idx = i
+            break
+
+    if last_human_idx != -1:
+        current_turn = messages[last_human_idx:]
+        # If trimming severed or dropped the active turn, ensure at least the active turn is preserved
+        if len(trimmed) < len(current_turn):
+            trimmed = current_turn
+
+    invoke = [SystemMessage(content=system_prompt)]
+    if summary:
+        invoke.append(SystemMessage(content=f"Summary of prior conversation:\n{summary}"))
+    elif len(trimmed) < len(messages):
+        invoke.append(SystemMessage(content="[Note: Earlier conversation turns have been archived to stay within context limits.]"))
+
+    logger.debug(
+        "Bounded memory trim: trimmed working context from %d to %d messages (max_messages=%d)",
+        len(messages),
+        len(trimmed),
+        max_messages,
+    )
+    return invoke + list(trimmed)
+
+
 def build_rag_graph(
     llm,
     tools: list,
@@ -132,7 +192,18 @@ def build_rag_graph(
             )
             return {"messages": [fallback_msg], "answer": fallback_msg.content}
 
-        invoke_messages = [SystemMessage(content=system_prompt)] + messages
+        # Memory Management: Safely trim working context for LLM invocation while checkpoint preserves full history
+        from src.config import settings
+        cfg_max_msgs = config.get("configurable", {}).get("max_messages") if config else None
+        max_msgs = cfg_max_msgs if cfg_max_msgs is not None else getattr(settings, "max_messages", 50)
+        summary = state.get("summary")
+
+        invoke_messages = safe_trim_messages(
+            messages,
+            max_messages=max_msgs,
+            system_prompt=system_prompt,
+            summary=summary,
+        )
         response = await llm_with_tools.ainvoke(invoke_messages)
 
         update = {"messages": [response]}

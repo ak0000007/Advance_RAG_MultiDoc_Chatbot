@@ -70,3 +70,8 @@ class RAGState(TypedDict, total=False):
     # -----------------------------------------------------
     # Answer evaluation & Verification
     citation_verification: dict[str, Any]
+
+    # -----------------------------------------------------
+    # Memory Management
+    # Optional rolling summary of prior conversation turns
+    summary: str

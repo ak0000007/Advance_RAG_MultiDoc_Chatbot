@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Max Salesforce write operations allowed per conversation session.
     max_writes_per_session: int = 5
 
+    # Memory Management (bounded working context for LLM invocation)
+    max_messages: int = 50
+    max_message_tokens: int | None = None
+
     # Multi-agent architecture toggle: routes through orchestrator + 3 specialist subgraphs
     use_multi_agent_architecture: bool = False
 
