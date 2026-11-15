@@ -17,7 +17,7 @@ from typing import Optional, Any
 import jwt
 
 logger = logging.getLogger(__name__)
-from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from langchain_core.messages import HumanMessage, AIMessage
@@ -34,6 +34,8 @@ from src.api.schemas import (
 )
 from src.retrieval.citations import extract_citations_from_messages
 from src.api.dependencies import get_compiled_graph, get_active_graph, get_db_pool
+from src.api.rate_limiter import get_limiter
+from src.llm.provider import is_rate_limit_error, ModelRateLimitError
 
 router = APIRouter()
 
@@ -299,6 +301,30 @@ def _resolve_caller_identity(auth_user: Optional[str | AuthUser]) -> tuple[str, 
         return tenant_id, f"key_{api_key_id}"
 
     return tenant_id, None
+
+
+async def check_rate_limit(
+    request: Request,
+    auth_user: Optional[str | AuthUser] = Depends(_verify_auth_and_get_user),
+) -> None:
+    """
+    Enforce tenant-aware sliding-window rate limiting on LLM/chat operations.
+    Disabled by default (RATE_LIMIT_ENABLED=false).
+    """
+    if not settings.rate_limit_enabled:
+        return
+
+    caller_tenant_id, caller_user_id = _resolve_caller_identity(auth_user)
+    if caller_user_id:
+        key = f"{caller_tenant_id}:{caller_user_id}"
+    elif request.client and request.client.host:
+        key = f"{caller_tenant_id}:{request.client.host}"
+    else:
+        key = f"{caller_tenant_id}:anonymous"
+
+    limiter = get_limiter()
+    await limiter.acquire(key)
+
 
 
 def _resolve_identity(auth_user: Optional[str | AuthUser]) -> tuple[Optional[str], str]:
@@ -583,8 +609,17 @@ async def _run_and_respond(graph, inputs, config: dict, thread_id: str) -> ChatR
 
     # Run the graph; stream_mode="values" yields full state after each step.
     # astream finishes even when interrupted (GraphInterrupt is caught internally).
-    async for _ in graph.astream(inputs, config, stream_mode="values"):
-        pass
+    try:
+        async for _ in graph.astream(inputs, config, stream_mode="values"):
+            pass
+    except Exception as exc:
+        if is_rate_limit_error(exc):
+            raise HTTPException(
+                status_code=429,
+                detail="Upstream model rate limit or quota exceeded. Please retry later.",
+                headers={"Retry-After": "60"},
+            )
+        raise
 
     # Inspect final / paused state
     snapshot = await graph.aget_state(config)
@@ -641,6 +676,7 @@ async def _stream_graph_events(graph, inputs, config: dict, thread_id: str):
       - error: Unhandled exception during graph execution.
     """
     accumulated_answer: list[str] = []
+    streamed_tokens: int = 0
     trace_id = config.get("configurable", {}).get("trace_id") or generate_trace_id()
     try:
         async for event in graph.astream_events(inputs, config, version="v2"):
@@ -672,8 +708,18 @@ async def _stream_graph_events(graph, inputs, config: dict, thread_id: str):
 
                     if text:
                         accumulated_answer.append(text)
+                        streamed_tokens += 1
                         payload = json.dumps({"event": "token", "chunk": text})
                         yield f"event: token\ndata: {payload}\n\n"
+
+                        if streamed_tokens >= settings.max_streaming_tokens:
+                            payload = json.dumps({
+                                "event": "status",
+                                "stage": "token_limit",
+                                "message": f"Token streaming safeguard reached ({settings.max_streaming_tokens} tokens).",
+                            })
+                            yield f"event: status\ndata: {payload}\n\n"
+                            break
 
             # 2. Tool Start Progress
             elif kind == "on_tool_start":
@@ -747,8 +793,16 @@ async def _stream_graph_events(graph, inputs, config: dict, thread_id: str):
             yield f"event: done\ndata: {payload}\n\n"
 
     except Exception as exc:
-        payload = json.dumps({"event": "error", "detail": str(exc)})
-        yield f"event: error\ndata: {payload}\n\n"
+        if is_rate_limit_error(exc):
+            payload = json.dumps({
+                "event": "error",
+                "detail": "Upstream model rate limit or quota exceeded. Please retry later.",
+                "retry_after": 60,
+            })
+            yield f"event: error\ndata: {payload}\n\n"
+        else:
+            payload = json.dumps({"event": "error", "detail": str(exc)})
+            yield f"event: error\ndata: {payload}\n\n"
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -762,6 +816,7 @@ def health():
 async def chat(
     request: ChatRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
+    _rate_limit: None = Depends(check_rate_limit),
     graph=Depends(get_active_graph),
 ):
     """
@@ -784,6 +839,7 @@ async def chat(
 async def chat_stream(
     request: ChatRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
+    _rate_limit: None = Depends(check_rate_limit),
     graph=Depends(get_active_graph),
 ):
     """
@@ -809,6 +865,7 @@ async def chat_stream(
 async def resume_chat(
     request: ResumeRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
+    _rate_limit: None = Depends(check_rate_limit),
     graph=Depends(get_active_graph),
 ):
     """
@@ -863,6 +920,7 @@ async def resume_chat(
 async def resume_chat_stream(
     request: ResumeRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
+    _rate_limit: None = Depends(check_rate_limit),
     graph=Depends(get_active_graph),
 ):
     """

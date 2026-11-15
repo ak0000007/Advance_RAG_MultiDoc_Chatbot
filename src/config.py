@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     max_messages: int = 50
     max_message_tokens: int | None = None
 
+    # Rate Limiting & Cost Governance
+    rate_limit_enabled: bool = False
+    rate_limit_requests_per_minute: int = 60
+    max_streaming_tokens: int = 4096
+
     # Multi-agent architecture toggle: routes through orchestrator + 3 specialist subgraphs
     use_multi_agent_architecture: bool = False
 
@@ -105,6 +110,7 @@ class Settings(BaseSettings):
         "use_reranker",
         "dev_mode",
         "allow_unowned_threads",
+        "rate_limit_enabled",
         mode="before",
     )
     @classmethod

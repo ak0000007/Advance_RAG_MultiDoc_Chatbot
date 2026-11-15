@@ -68,6 +68,12 @@ async def lifespan(app: FastAPI):
 
     from src.api.dependencies import get_db_pool, get_salesforce_client
     from src.audit.log import init_audit_table
+    from src.api.rate_limiter import configure as configure_rate_limiter
+
+    configure_rate_limiter(
+        requests_per_minute=settings.rate_limit_requests_per_minute,
+        enabled=settings.rate_limit_enabled,
+    )
 
     pool = get_db_pool()
     if pool is not None:

@@ -31,6 +31,20 @@ class ModelRateLimitError(ModelProviderError):
     """
 
 
+def is_rate_limit_error(exc: Exception) -> bool:
+    """Check if an exception represents an upstream provider rate limit or quota exhaustion."""
+    if isinstance(exc, ModelRateLimitError):
+        return True
+    exc_name = type(exc).__name__
+    if exc_name in ("ResourceExhausted", "TooManyRequests", "RateLimitError"):
+        return True
+    msg = str(exc).lower()
+    if "429" in msg or "resourceexhausted" in msg or "quota exceeded" in msg or "rate limit" in msg:
+        return True
+    return False
+
+
+
 # =========================================================
 # Provider list
 # =========================================================
