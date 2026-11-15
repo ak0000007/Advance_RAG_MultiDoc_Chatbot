@@ -35,22 +35,35 @@ def get_postgres_pool(postgres_url: Optional[str] = None):
     return _SHARED_POOL
 
 
+def resolve_checkpointer_backend(postgres_url: Optional[str] = None) -> tuple[str, Optional[str]]:
+    """
+    Expose checkpointer backend choice without opening pools.
+    Returns (backend_type, reason_or_error).
+    backend_type is 'postgres' or 'memory'.
+    """
+    if not postgres_url:
+        return "memory", "POSTGRES_URL not set"
+    try:
+        import psycopg_pool
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        return "postgres", None
+    except ImportError as exc:
+        return "memory", f"missing package: {exc}"
+
+
 def get_checkpointer(postgres_url: Optional[str] = None):
     """
     Factory for the checkpointer.
     
-    If postgres_url is provided, it tries to initialize a PostgresSaver.
-    Otherwise, it returns a MemorySaver (RAM).
+    If postgres_url is provided and drivers are installed, returns AsyncPostgresSaver.
+    Otherwise, returns MemorySaver (RAM).
     """
-    if postgres_url:
-        try:
+    backend, reason = resolve_checkpointer_backend(postgres_url)
+    if backend == "postgres":
+        pool = get_postgres_pool(postgres_url)
+        if pool is not None:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-            pool = get_postgres_pool(postgres_url)
-            if pool is not None:
-                return AsyncPostgresSaver(pool)
-        except ImportError:
-            print("WARNING: langgraph-checkpoint-postgres or psycopg not installed. Falling back to MemorySaver.")
+            return AsyncPostgresSaver(pool)
     
     from langgraph.checkpoint.memory import MemorySaver
     return MemorySaver()

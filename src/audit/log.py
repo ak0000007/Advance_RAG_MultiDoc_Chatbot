@@ -75,12 +75,14 @@ async def record_decision(
     idempotency_key: str,
     decision: str,
     status: str,
+    approver: Optional[str] = None,
 ) -> None:
-    """Record human approval decision (Approve / Reject)."""
+    """Record human approval decision (Approve / Reject) and approver identity."""
     query = """
         UPDATE write_audit_log
         SET decision = %(decision)s,
             status = %(status)s,
+            approver = COALESCE(%(approver)s, approver),
             updated_at = now()
         WHERE idempotency_key = %(idempotency_key)s;
     """
@@ -88,9 +90,24 @@ async def record_decision(
         "idempotency_key": idempotency_key,
         "decision": decision,
         "status": status,
+        "approver": approver,
     }
     async with _get_conn(pool) as conn:
-        await conn.execute(query, params)
+        try:
+            await conn.execute(query, params)
+        except Exception:
+            fallback_query = """
+                UPDATE write_audit_log
+                SET decision = %(decision)s,
+                    status = %(status)s,
+                    updated_at = now()
+                WHERE idempotency_key = %(idempotency_key)s;
+            """
+            await conn.execute(fallback_query, {
+                "idempotency_key": idempotency_key,
+                "decision": decision,
+                "status": status,
+            })
 
 
 async def record_outcome(

@@ -66,9 +66,10 @@ async def test_routes_auth_and_resume_username():
             _verify_auth_and_get_user(None, None)
         assert exc.value.status_code == 401
 
-        # Passes with correct API key
+        # Passes with correct API key (P0-2: mapped to key service identity if sf_default_username is None)
         user = _verify_auth_and_get_user(None, "secret123")
-        assert user == settings.sf_default_username
+        assert user is not None
+        assert str(user).startswith("key_") if not settings.sf_default_username else user == settings.sf_default_username
 
     # Verify config builder includes sf_username
     config = _build_config("thread_1", "agent@salesforce.com")

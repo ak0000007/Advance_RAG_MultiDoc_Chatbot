@@ -96,8 +96,8 @@ class TestSchemas:
 
     def test_chat_request_with_thread(self):
         from src.api.schemas import ChatRequest
-        req = ChatRequest(question="test", thread_id="abc-123")
-        assert req.thread_id == "abc-123"
+        req = ChatRequest(question="test", thread_id="thread-abc-123")
+        assert req.thread_id == "thread-abc-123"
 
     def test_chat_response_defaults(self):
         from src.api.schemas import ChatResponse
@@ -120,13 +120,13 @@ class TestSchemas:
 
     def test_resume_request_valid(self):
         from src.api.schemas import ResumeRequest
-        req = ResumeRequest(thread_id="t1", decision="Approve")
+        req = ResumeRequest(thread_id="thread-t1-test", decision="Approve")
         assert req.decision == "Approve"
 
     def test_resume_request_invalid_decision(self):
         from src.api.schemas import ResumeRequest
         with pytest.raises(Exception):
-            ResumeRequest(thread_id="t1", decision="Maybe")
+            ResumeRequest(thread_id="thread-t1-test", decision="Maybe")
 
     def test_citation_schema(self):
         from src.api.schemas import Citation
@@ -835,10 +835,10 @@ class TestRouteHelpers:
     def test_prepare_chat_context(self):
         from src.api.routes import _prepare_chat_context
         from src.api.schemas import ChatRequest
-        req = ChatRequest(question="Hello", thread_id="t1")
+        req = ChatRequest(question="Hello", thread_id="thread-t1-test")
         inputs, config, thread_id = _prepare_chat_context(req, "admin@sf.com")
         assert inputs["question"] == "Hello"
-        assert thread_id == "t1"
+        assert thread_id == "thread-t1-test"
         assert config["configurable"]["sf_username"] == "admin@sf.com"
 
     def test_prepare_chat_context_auto_thread(self):

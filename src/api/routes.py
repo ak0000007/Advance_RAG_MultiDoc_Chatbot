@@ -5,14 +5,18 @@ SRP: only HTTP → graph → HTTP translation.
 OCP: add new routers in new files, include them in app.py.
 """
 
+import hashlib
 import json
+import logging
 import re
 import secrets
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 import jwt
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
@@ -90,6 +94,7 @@ class AuthUser(str):
     sf_user_id: Optional[str]
     sf_role: Optional[str]
     sf_org_id: Optional[str]
+    api_key_id: Optional[str]
 
     def __new__(
         cls,
@@ -98,6 +103,7 @@ class AuthUser(str):
         sf_user_id: Optional[str] = None,
         sf_role: Optional[str] = None,
         sf_org_id: Optional[str] = None,
+        api_key_id: Optional[str] = None,
     ):
         obj = super().__new__(cls, username)
         obj.username = username
@@ -105,6 +111,7 @@ class AuthUser(str):
         obj.sf_user_id = sf_user_id
         obj.sf_role = sf_role
         obj.sf_org_id = sf_org_id
+        obj.api_key_id = api_key_id
         return obj
 
 
@@ -234,13 +241,14 @@ def _verify_auth_and_get_user(
     if settings.api_key_mapping and token:
         for mapped_key, user_info in settings.api_key_mapping.items():
             if secrets.compare_digest(token, mapped_key):
+                key_id = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
                 if isinstance(user_info, dict):
-                    uname = user_info.get("username") or settings.sf_default_username or "api_user"
+                    uname = user_info.get("username") or settings.sf_default_username or f"key_{key_id}"
                     tid = user_info.get("tenant_id") or "default"
                 else:
                     uname = str(user_info)
                     tid = "default"
-                return AuthUser(uname, tid)
+                return AuthUser(uname, tid, api_key_id=key_id)
 
     # 2. Check global api_secret_key with constant-time comparison
     required_key = (
@@ -255,9 +263,10 @@ def _verify_auth_and_get_user(
                 detail="Invalid or missing authentication credentials.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        key_id = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
         if settings.sf_default_username:
-            return AuthUser(settings.sf_default_username, "default")
-        return None
+            return AuthUser(settings.sf_default_username, "default", api_key_id=key_id)
+        return AuthUser(f"key_{key_id}", "default", api_key_id=key_id)
 
     # 3. Dev mode / unauthenticated fallback
     if settings.sf_default_username:
@@ -266,6 +275,58 @@ def _verify_auth_and_get_user(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _resolve_caller_identity(auth_user: Optional[str | AuthUser]) -> tuple[str, Optional[str]]:
+    """
+    Resolve (caller_tenant_id, caller_user_id) from auth_user.
+    caller_user_id is sf_user_id when SF auth is active, else username,
+    else api_key_id in shared-key mode, else None.
+    """
+    if auth_user is None:
+        return "default", None
+
+    tenant_id = getattr(auth_user, "tenant_id", "default") or "default"
+    sf_user_id = getattr(auth_user, "sf_user_id", None)
+    if sf_user_id:
+        return tenant_id, str(sf_user_id)
+
+    username = getattr(auth_user, "username", None) or (str(auth_user) if str(auth_user).strip() else None)
+    if username:
+        return tenant_id, str(username)
+
+    api_key_id = getattr(auth_user, "api_key_id", None)
+    if api_key_id:
+        return tenant_id, f"key_{api_key_id}"
+
+    return tenant_id, None
+
+
+def _resolve_identity(auth_user: Optional[str | AuthUser]) -> tuple[Optional[str], str]:
+    """
+    Centralized identity resolution used across /chat, /chat/stream, /chat/resume, /chat/resume/stream.
+    Returns (sf_username, tenant_id).
+    When DEV_MODE is false, sf_username comes strictly from auth_user or sf_default_username.
+    """
+    sf_user_id = getattr(auth_user, "sf_user_id", None)
+    sf_auth_active = (getattr(settings, "sf_auth_enabled", False) is True) or bool(sf_user_id)
+
+    if sf_auth_active:
+        sf_username = getattr(auth_user, "username", None) or (str(auth_user) if auth_user else None)
+        tenant_id = getattr(auth_user, "tenant_id", "default")
+        return sf_username, tenant_id
+
+    # Non-SF-auth mode: server-side auth identity only
+    if auth_user:
+        raw_username = getattr(auth_user, "username", None) or str(auth_user)
+        tenant_id = getattr(auth_user, "tenant_id", "default")
+    else:
+        raw_username = settings.sf_default_username
+        tenant_id = "default"
+
+    sf_username = None
+    if raw_username:
+        sf_username = re.sub(r"[\x00-\x1f\x7f]", "", str(raw_username)).strip()[:100]
+    return sf_username, tenant_id
 
 def _build_config(
     thread_id: str,
@@ -332,12 +393,103 @@ def _build_config(
     }
 
 
+async def _assert_thread_access(
+    graph,
+    thread_id: str,
+    auth_user: Optional[str | AuthUser],
+    endpoint: str = "chat",
+    snapshot: Any = None,
+    trace_id: Optional[str] = None,
+) -> Any:
+    """
+    Uniform thread ownership guard for /chat, /chat/stream, /chat/resume, /chat/resume/stream.
+    Runs BEFORE any graph invocation or history read.
+    """
+    is_resume = endpoint in ("resume", "resume_stream")
+    not_found_detail = (
+        f"Thread '{thread_id}' is not paused or does not exist."
+        if is_resume
+        else f"Thread '{thread_id}' not found."
+    )
+
+    if snapshot is None:
+        if not hasattr(graph, "aget_state"):
+            return None
+        check_config = {"configurable": {"thread_id": thread_id}}
+        snapshot = await graph.aget_state(check_config)
+
+    # 1. Thread does not exist yet
+    if not snapshot or not snapshot.values:
+        if is_resume:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail)
+        return snapshot
+
+    # 2. Thread exists: inspect stored owner
+    stored_owner_tenant = snapshot.values.get("owner_tenant_id")
+    stored_owner_user = snapshot.values.get("owner_user_id")
+
+    caller_tenant_id, caller_user_id = _resolve_caller_identity(auth_user)
+    thread_hash = hashlib.sha256(thread_id.encode("utf-8")).hexdigest()[:16]
+
+    # Open mode with no key: threads are unowned/anonymous; ownership cannot be enforced
+    has_auth_configured = bool(
+        settings.sf_auth_enabled
+        or settings.api_key_mapping
+        or (
+            settings.api_secret_key.get_secret_value()
+            if hasattr(settings.api_secret_key, "get_secret_value")
+            else settings.api_secret_key
+        )
+    )
+    if auth_user is None and not has_auth_configured:
+        logger.warning(
+            "Unauthenticated request in open mode on thread %s; thread ownership cannot be enforced.",
+            thread_hash,
+        )
+        return snapshot
+
+    # Handle unowned legacy threads
+    if not stored_owner_tenant and not stored_owner_user:
+        if settings.allow_unowned_threads:
+            logger.warning(
+                "Access granted to legacy unowned thread %s because ALLOW_UNOWNED_THREADS=true. trace_id=%s",
+                thread_hash, trace_id
+            )
+            return snapshot
+        else:
+            logger.warning(
+                "Access denied to legacy unowned thread %s (ALLOW_UNOWNED_THREADS=false). trace_id=%s",
+                thread_hash, trace_id
+            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail)
+
+    # Ownership comparison
+    is_owner = (stored_owner_tenant == caller_tenant_id) and (stored_owner_user == caller_user_id)
+
+    # Check approver role if configured (for resume endpoints)
+    is_approver = False
+    if is_resume and not is_owner and settings.approver_roles:
+        caller_role = getattr(auth_user, "sf_role", None)
+        if caller_role and caller_role in settings.approver_roles and stored_owner_tenant == caller_tenant_id:
+            is_approver = True
+
+    if not is_owner and not is_approver:
+        logger.warning(
+            "Thread access denied. trace_id=%s caller_user=%s caller_tenant=%s thread_hash=%s",
+            trace_id, caller_user_id, caller_tenant_id, thread_hash
+        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_detail)
+
+    return snapshot
+
+
 def _prepare_chat_context(
     request: ChatRequest,
     auth_user: Optional[str | AuthUser],
+    trace_id: Optional[str] = None,
 ) -> tuple[dict, dict, str]:
     """
-    Standardize message sequence, authenticated sf_username, tenant_id, and thread config.
+    Standardize message sequence, authenticated sf_username, tenant_id, owner context, and thread config.
     """
     messages = []
 
@@ -361,24 +513,25 @@ def _prepare_chat_context(
     sf_org_id = getattr(auth_user, "sf_org_id", None)
     sf_auth_active = (getattr(settings, "sf_auth_enabled", False) is True) or bool(sf_user_id)
 
-    if sf_auth_active:
-        # Security invariant: NEVER read user/tenant identity from body when SF auth is active
-        sf_username = getattr(auth_user, "username", None) or (str(auth_user) if auth_user else None)
-        tenant_id = getattr(auth_user, "tenant_id", "default")
-    else:
-        # Backward-compatible resolution: server auth takes precedence, body fallback
-        raw_username = auth_user or request.sf_username
-        sf_username = None
-        if raw_username:
-            sf_username = re.sub(r"[\x00-\x1f\x7f]", "", str(raw_username)).strip()[:100]
-        tenant_id = getattr(auth_user, "tenant_id", None) or "default"
+    sf_username, tenant_id = _resolve_identity(auth_user)
+
+    # Body-supplied sf_username is honoured ONLY when DEV_MODE=true
+    if settings.dev_mode and request.sf_username and not sf_auth_active:
+        raw_body_user = re.sub(r"[\x00-\x1f\x7f]", "", str(request.sf_username)).strip()[:100]
+        if raw_body_user:
+            logger.warning("DEV_MODE: using body-supplied sf_username '%s'", raw_body_user)
+            sf_username = raw_body_user
+    elif request.sf_username:
+        logger.debug("Non-DEV_MODE: request.sf_username ignored.")
+
+    owner_tenant_id, owner_user_id = _resolve_caller_identity(auth_user)
 
     thread_id = request.thread_id or str(uuid.uuid4())
-    trace_id = getattr(request, "trace_id", None) or generate_trace_id()
+    tid = trace_id or getattr(request, "trace_id", None) or generate_trace_id()
     config = _build_config(
         thread_id,
         sf_username,
-        trace_id=trace_id,
+        trace_id=tid,
         tenant_id=tenant_id,
         sf_user_id=sf_user_id,
         sf_role=sf_role,
@@ -391,6 +544,22 @@ def _prepare_chat_context(
         "citations": [],
         "tenant_id": tenant_id,
     }
+    if sf_username:
+        inputs["sf_username"] = sf_username
+    if sf_user_id:
+        inputs["sf_user_id"] = sf_user_id
+    if sf_role:
+        inputs["sf_role"] = sf_role
+    if sf_org_id:
+        inputs["sf_org_id"] = sf_org_id
+
+    # Stamp immutable thread owner (stripped of any client-influenced fields)
+    if owner_tenant_id:
+        inputs["owner_tenant_id"] = owner_tenant_id
+    if owner_user_id:
+        inputs["owner_user_id"] = owner_user_id
+
+    return inputs, config, thread_id
     if sf_username:
         inputs["sf_username"] = sf_username
     if sf_user_id:
@@ -604,7 +773,10 @@ async def chat(
           the graph pauses for human approval (Salesforce update confirmation).
           The frontend must display the approval UI and POST to /chat/resume.
     """
-    inputs, config, thread_id = _prepare_chat_context(request, auth_user)
+    trace_id = getattr(request, "trace_id", None) or generate_trace_id()
+    if request.thread_id:
+        await _assert_thread_access(graph, request.thread_id, auth_user, endpoint="chat", trace_id=trace_id)
+    inputs, config, thread_id = _prepare_chat_context(request, auth_user, trace_id=trace_id)
     return await _run_and_respond(graph, inputs, config, thread_id)
 
 
@@ -618,7 +790,10 @@ async def chat_stream(
     Stream the RAG graph execution via Server-Sent Events (SSE).
     Yields 'status', 'token', 'interrupt', and 'done' events.
     """
-    inputs, config, thread_id = _prepare_chat_context(request, auth_user)
+    trace_id = getattr(request, "trace_id", None) or generate_trace_id()
+    if request.thread_id:
+        await _assert_thread_access(graph, request.thread_id, auth_user, endpoint="chat_stream", trace_id=trace_id)
+    inputs, config, thread_id = _prepare_chat_context(request, auth_user, trace_id=trace_id)
     return StreamingResponse(
         _stream_graph_events(graph, inputs, config, thread_id),
         media_type="text/event-stream",
@@ -655,43 +830,24 @@ async def resume_chat(
             detail=f"Thread '{request.thread_id}' is not paused or does not exist.",
         )
 
-    # Preserve sf_username and tenant_id across resume: state checkpoint or server auth
-    thread_sf_username = (
-        snapshot.values.get("sf_username")
-        if snapshot.values
-        else None
-    ) or (getattr(auth_user, "username", None) if auth_user else None) or auth_user
-    thread_tenant_id = (
-        snapshot.values.get("tenant_id")
-        if snapshot.values
-        else None
-    ) or getattr(auth_user, "tenant_id", "default")
-    thread_sf_user_id = (
-        snapshot.values.get("sf_user_id")
-        if snapshot.values
-        else None
-    ) or getattr(auth_user, "sf_user_id", None)
-    thread_sf_role = (
-        snapshot.values.get("sf_role")
-        if snapshot.values
-        else None
-    ) or getattr(auth_user, "sf_role", None)
-    thread_sf_org_id = (
-        snapshot.values.get("sf_org_id")
-        if snapshot.values
-        else None
-    ) or getattr(auth_user, "sf_org_id", None)
-    sf_auth_active = bool(settings.sf_auth_enabled or thread_sf_user_id)
+    await _assert_thread_access(graph, request.thread_id, auth_user, endpoint="resume", snapshot=snapshot, trace_id=trace_id)
+
+    # Resume execution config built strictly from CALLER's verified identity
+    caller_sf_username, caller_tenant_id = _resolve_identity(auth_user)
+    caller_sf_user_id = getattr(auth_user, "sf_user_id", None)
+    caller_sf_role = getattr(auth_user, "sf_role", None)
+    caller_sf_org_id = getattr(auth_user, "sf_org_id", None)
+    sf_auth_active = bool(settings.sf_auth_enabled or caller_sf_user_id)
 
     config = _build_config(
         request.thread_id,
-        thread_sf_username,
+        caller_sf_username,
         trace_id=trace_id,
         endpoint="resume",
-        tenant_id=thread_tenant_id,
-        sf_user_id=thread_sf_user_id,
-        sf_role=thread_sf_role,
-        sf_org_id=thread_sf_org_id,
+        tenant_id=caller_tenant_id,
+        sf_user_id=caller_sf_user_id,
+        sf_role=caller_sf_role,
+        sf_org_id=caller_sf_org_id,
         sf_auth_active=sf_auth_active,
     )
 
@@ -722,42 +878,24 @@ async def resume_chat_stream(
             detail=f"Thread '{request.thread_id}' is not paused or does not exist.",
         )
 
-    thread_sf_username = (
-        snapshot.values.get("sf_username")
-        if snapshot.values
-        else None
-    ) or (getattr(auth_user, "username", None) if auth_user else None) or auth_user
-    thread_tenant_id = (
-        snapshot.values.get("tenant_id")
-        if snapshot.values
-        else None
-    ) or getattr(auth_user, "tenant_id", "default")
-    thread_sf_user_id = (
-        snapshot.values.get("sf_user_id")
-        if snapshot.values
-        else None
-    ) or getattr(auth_user, "sf_user_id", None)
-    thread_sf_role = (
-        snapshot.values.get("sf_role")
-        if snapshot.values
-        else None
-    ) or getattr(auth_user, "sf_role", None)
-    thread_sf_org_id = (
-        snapshot.values.get("sf_org_id")
-        if snapshot.values
-        else None
-    ) or getattr(auth_user, "sf_org_id", None)
-    sf_auth_active = bool(settings.sf_auth_enabled or thread_sf_user_id)
+    await _assert_thread_access(graph, request.thread_id, auth_user, endpoint="resume_stream", snapshot=snapshot, trace_id=trace_id)
+
+    # Resume execution config built strictly from CALLER's verified identity
+    caller_sf_username, caller_tenant_id = _resolve_identity(auth_user)
+    caller_sf_user_id = getattr(auth_user, "sf_user_id", None)
+    caller_sf_role = getattr(auth_user, "sf_role", None)
+    caller_sf_org_id = getattr(auth_user, "sf_org_id", None)
+    sf_auth_active = bool(settings.sf_auth_enabled or caller_sf_user_id)
 
     config = _build_config(
         request.thread_id,
-        thread_sf_username,
+        caller_sf_username,
         trace_id=trace_id,
         endpoint="resume_stream",
-        tenant_id=thread_tenant_id,
-        sf_user_id=thread_sf_user_id,
-        sf_role=thread_sf_role,
-        sf_org_id=thread_sf_org_id,
+        tenant_id=caller_tenant_id,
+        sf_user_id=caller_sf_user_id,
+        sf_role=caller_sf_role,
+        sf_org_id=caller_sf_org_id,
         sf_auth_active=sf_auth_active,
     )
 

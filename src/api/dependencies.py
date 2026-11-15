@@ -351,13 +351,16 @@ def get_db_pool():
     """
     Return the shared PostgreSQL connection pool singleton.
     Uses settings.postgres_url.
+    Catches only ImportError (missing driver); other exceptions propagate to caller.
     """
     if not settings.postgres_url:
         return None
     try:
         from src.graph.memory import get_postgres_pool
         return get_postgres_pool(settings.postgres_url)
-    except Exception:
+    except ImportError as exc:
+        import logging
+        logging.getLogger(__name__).error("get_db_pool: driver not installed: %s", exc)
         return None
 
 

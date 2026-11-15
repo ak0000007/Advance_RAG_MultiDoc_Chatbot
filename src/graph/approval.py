@@ -177,6 +177,13 @@ def build_human_approval_node(salesforce_client, pool=None):
 
         # ── Audit: record decision ──────────────────────────────────────────
         decision_status = "approved" if decision == "Approve" else ("rejected" if decision == "Reject" else "aborted")
+        approver = (
+            (config.get("configurable", {}).get("sf_user_id") if config else None)
+            or (config.get("configurable", {}).get("sf_username") if config else None)
+            or state.get("owner_user_id")
+            or state.get("sf_username")
+            or "anonymous"
+        )
         if pool is not None:
             try:
                 await record_decision(
@@ -184,6 +191,7 @@ def build_human_approval_node(salesforce_client, pool=None):
                     idempotency_key=idempotency_key,
                     decision=str(decision),
                     status=decision_status,
+                    approver=str(approver),
                 )
             except Exception as exc:
                 logger.warning(f"Audit log record_decision bypassed: {exc}")

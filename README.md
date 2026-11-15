@@ -338,6 +338,36 @@ python scripts/diagnose_reranker.py
 
 ---
 
+## Security Model
+
+### 1. Thread Ownership & IDOR Protection (P0-1)
+- **Immutable Ownership**: When a thread is created on Turn 1, the server permanently records `owner_tenant_id` and `owner_user_id` inside the checkpoint state. Client-supplied ownership fields are strictly stripped.
+- **Unified Access Guard**: All endpoints (`/chat`, `/chat/stream`, `/chat/resume`, `/chat/resume/stream`) verify thread ownership before touching conversation state or executing tools.
+- **Uniform Denial (Anti-Probing)**: Non-owners receive identical `404 Not Found` responses to prevent thread ID discovery. Mismatches are logged server-side with SHA-256 thread hashes.
+- **Resume Identity Binding**: Resuming an interrupted approval flow executes strictly under the caller's authenticated identity (`auth_user`), never from values stored in the checkpoint.
+- **Legacy Thread Migration**: Existing unowned threads are denied by default. Set `ALLOW_UNOWNED_THREADS=true` in `.env` only during migration phases.
+
+### 2. Identity Resolution & Client Protection (P0-2)
+- **Server Identity Invariant**: Identity is derived exclusively from server-side verification:
+  - **Salesforce User Auth**: Verified RS256 JWT bearer assertions binding `sf_user_id`.
+  - **API Key Mapping**: `API_KEY_MAPPING` maps distinct keys to `{username, tenant_id}`.
+  - **Shared Secret Key**: Uses `SF_DEFAULT_USERNAME` or maps to a deterministic key-derived service identity (`key_<sha256>`).
+- **Body-Supplied `sf_username` Deprecated**: Request body `sf_username` is strictly ignored in production (`DEV_MODE=false`). It is honoured only when `DEV_MODE=true` for local debugging with sanitized length caps and warning logs.
+
+### 3. Startup Configuration Validation (P1-3)
+The FastAPI lifespan executes `validate_runtime_config(settings)` before opening connection pools:
+- **Production Auth**: Requires at least one authentication method; fails fast otherwise.
+- **Persistence with Write Tools**: HITL write tools require PostgreSQL (`POSTGRES_URL`); `MemorySaver` in production aborts startup to prevent state loss.
+- **Audit Logging**: Write operations require an active database pool for tamper-evident audit records.
+- **Documents-Only Mode**: When `CRM_ENABLED=false` or SF credentials are omitted, the copilot boots cleanly in read-only RAG mode.
+
+### Known Limitations
+- **Per-Thread Ownership**: Ownership is enforced at the thread level, not per individual message.
+- **Anonymous Mode**: Unauthenticated sessions in open mode cannot be protected by ownership controls; open mode is rejected at startup in production.
+- **Multi-Worker Memory**: Running multiple server workers (`WEB_CONCURRENCY > 1`) requires PostgreSQL checkpointing; in-memory storage does not synchronize across workers.
+
+---
+
 ## Agent Guidelines & Standards
 
 AI coding agents and autonomous contributors must follow [`AGENTS.md`](AGENTS.md):

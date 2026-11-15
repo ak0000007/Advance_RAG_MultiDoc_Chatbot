@@ -60,6 +60,10 @@ class RAGState(TypedDict, total=False):
     sf_role: str
     sf_org_id: str
 
+    # Immutable thread owner identity (set at thread creation)
+    owner_tenant_id: str
+    owner_user_id: str
+
     # Multi-agent architecture: tracks which specialist subgraph handled the turn
     classified_domain: str
 

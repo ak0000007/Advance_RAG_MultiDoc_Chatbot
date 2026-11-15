@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
+from typing import Literal
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -44,6 +45,17 @@ class Settings(BaseSettings):
     sf_default_username: str | None = None
     api_key_mapping: dict[str, dict[str, str]] = {}
 
+    # Environment & Developer Mode
+    environment: Literal["development", "production"] = "development"
+    dev_mode: bool = False
+
+    # Thread Ownership & Access Control (P0-1)
+    allow_unowned_threads: bool = False
+    approver_roles: list[str] = []
+
+    # CRM Module toggle (defaults to True if SF credentials / mock configured, else False)
+    crm_enabled: bool | None = None
+
     # Demo & Mock CRM Mode (run without Salesforce credentials)
     mock_salesforce: bool = False
 
@@ -74,11 +86,41 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "advance-rag-chatbot"
 
-    @field_validator("langsmith_tracing", "langfuse_enabled", "otel_enabled", "mock_salesforce", "sf_auth_enabled", "use_reranker", mode="before")
+    @property
+    def is_crm_active(self) -> bool:
+        if self.crm_enabled is not None:
+            return self.crm_enabled
+        return bool(self.sf_client_id and self.sf_private_key_path) or self.mock_salesforce
+
+    @field_validator(
+        "langsmith_tracing",
+        "langfuse_enabled",
+        "otel_enabled",
+        "mock_salesforce",
+        "sf_auth_enabled",
+        "use_reranker",
+        "dev_mode",
+        "allow_unowned_threads",
+        mode="before",
+    )
     @classmethod
     def parse_bool_env(cls, v):
         if isinstance(v, str):
             return v.strip().lower() in ("true", "1", "yes", "on")
+        return bool(v)
+
+    @field_validator("crm_enabled", mode="before")
+    @classmethod
+    def parse_optional_bool_env(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_clean = v.strip().lower()
+            if v_clean in ("true", "1", "yes", "on"):
+                return True
+            if v_clean in ("false", "0", "no", "off"):
+                return False
+            return None
         return bool(v)
 
     @field_validator("api_key_mapping", mode="before")
@@ -93,9 +135,9 @@ class Settings(BaseSettings):
                     pass
         return v or {}
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "approver_roles", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v):
+    def parse_list_origins(cls, v):
         if isinstance(v, str):
             v_str = v.strip()
             if v_str.startswith("["):
@@ -103,7 +145,7 @@ class Settings(BaseSettings):
                     return json.loads(v_str)
                 except Exception:
                     pass
-            return [origin.strip() for origin in v_str.split(",") if origin.strip()]
+            return [item.strip() for item in v_str.split(",") if item.strip()]
         return v
 
     model_config = SettingsConfigDict(

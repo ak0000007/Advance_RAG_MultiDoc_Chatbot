@@ -28,15 +28,16 @@ class ChatRequest(BaseModel):
 
     thread_id: str | None = Field(
         default=None,
+        pattern=r"^[A-Za-z0-9_-]{8,64}$",
         description=(
-            "Unique session ID for database memory. "
+            "Unique session ID for database memory. Must match ^[A-Za-z0-9_-]{8,64}$. "
             "If provided, history field is ignored."
         ),
     )
 
     sf_username: str | None = Field(
         default=None,
-        description="Salesforce username for executing CRM queries.",
+        description="DEPRECATED: Salesforce username. Ignored unless DEV_MODE=true.",
     )
 
     trace_id: str | None = Field(
@@ -94,7 +95,11 @@ class ChatResponse(BaseModel):
 class ResumeRequest(BaseModel):
     """Resume an interrupted graph with a human decision."""
 
-    thread_id: str = Field(..., description="The thread_id returned in the interrupted ChatResponse.")
+    thread_id: str = Field(
+        ...,
+        pattern=r"^[A-Za-z0-9_-]{8,64}$",
+        description="The thread_id returned in the interrupted ChatResponse. Must match ^[A-Za-z0-9_-]{8,64}$.",
+    )
     decision: Literal["Approve", "Reject"] = Field(
         ...,
         description="Human's approval decision. Must be exactly 'Approve' or 'Reject'.",

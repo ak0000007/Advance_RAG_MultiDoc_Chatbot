@@ -46,9 +46,26 @@ from src.api.dependencies import get_compiled_graph
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Eagerly build graph and initialize shared DB pool + audit tables at startup.
+    Validate runtime configuration, eagerly build graph, and initialize shared DB pool + audit tables.
     Cleanly shuts down DB connection pool and Salesforce HTTP connection pool on exit.
     """
+    import logging
+    app_logger = logging.getLogger(__name__)
+
+    from src.startup_validation import validate_runtime_config
+    fatals, warnings = validate_runtime_config(settings)
+    for w in warnings:
+        app_logger.warning("Startup Configuration Warning: %s", w)
+
+    if fatals:
+        if settings.dev_mode:
+            for f in fatals:
+                app_logger.warning("DEV_MODE: ignoring fatal configuration error: %s", f)
+        else:
+            msg = "Application startup aborted due to configuration errors:\n  - " + "\n  - ".join(fatals)
+            app_logger.error(msg)
+            raise RuntimeError(msg)
+
     from src.api.dependencies import get_db_pool, get_salesforce_client
     from src.audit.log import init_audit_table
 
