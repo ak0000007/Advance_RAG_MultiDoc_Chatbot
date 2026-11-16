@@ -172,7 +172,8 @@ def build_document_search_tool(
                             "chunk": chunk_text,
                             "context": chunk_text,
                             "format_instructions": parser.get_format_instructions(),
-                        }
+                        },
+                        config=config,
                     )
                     return document, grade, xml_entry, None
                 except Exception as exc:

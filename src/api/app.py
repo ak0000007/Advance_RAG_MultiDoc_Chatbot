@@ -27,6 +27,7 @@ Run:
 """
 
 from contextlib import asynccontextmanager
+import asyncio
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -78,17 +79,29 @@ async def lifespan(app: FastAPI):
     pool = get_db_pool()
     if pool is not None:
         await pool.open()
-        await init_audit_table(pool)
+        try:
+            await asyncio.wait_for(init_audit_table(pool), timeout=3.0)
+        except Exception as exc:
+            if settings.dev_mode:
+                app_logger.warning("DEV_MODE: PostgreSQL connection or migration timed out/failed (%s). Ensure PostgreSQL is running ('docker compose up -d postgres').", exc)
+            else:
+                raise
 
     sf_client = get_salesforce_client()
 
     graph = get_compiled_graph()
     if hasattr(graph, "checkpointer") and hasattr(graph.checkpointer, "setup"):
         import inspect
-        if inspect.iscoroutinefunction(graph.checkpointer.setup):
-            await graph.checkpointer.setup()
-        else:
-            graph.checkpointer.setup()
+        try:
+            if inspect.iscoroutinefunction(graph.checkpointer.setup):
+                await asyncio.wait_for(graph.checkpointer.setup(), timeout=3.0)
+            else:
+                graph.checkpointer.setup()
+        except Exception as exc:
+            if settings.dev_mode:
+                app_logger.warning("DEV_MODE: Checkpointer setup timed out/failed (%s). Ensure PostgreSQL is running.", exc)
+            else:
+                raise
     yield
 
     if pool is not None:

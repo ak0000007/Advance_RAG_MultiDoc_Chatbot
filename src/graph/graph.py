@@ -204,7 +204,7 @@ def build_rag_graph(
             system_prompt=system_prompt,
             summary=summary,
         )
-        response = await llm_with_tools.ainvoke(invoke_messages)
+        response = await llm_with_tools.ainvoke(invoke_messages, config=config)
 
         update = {"messages": [response]}
         username = (config.get("configurable", {}).get("sf_username") if config else None) or state.get("sf_username")

@@ -24,6 +24,13 @@ const btnApprove      = document.getElementById('btn-approve');
 const btnReject       = document.getElementById('btn-reject');
 const btnNew          = document.getElementById('btn-new');
 
+// ── Sidebar & History DOM refs ─────────────────────────────────────────────────
+const historySidebar   = document.getElementById('history-sidebar');
+const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
+const btnRefreshHistory= document.getElementById('btn-refresh-history');
+const btnSidebarNew    = document.getElementById('btn-sidebar-new');
+const threadList       = document.getElementById('thread-list');
+
 // Configure marked if available
 if (window.marked) {
   marked.setOptions({
@@ -52,15 +59,40 @@ async function checkHealth() {
 checkHealth();
 setInterval(checkHealth, 30_000);
 
-// ── Thread management ─────────────────────────────────────────────────────────
+// ── Thread & History Management ──────────────────────────────────────────────
+function highlightActiveThread(id) {
+  if (!threadList) return;
+  const items = threadList.querySelectorAll('.thread-item');
+  items.forEach(el => {
+    if (id && el.dataset.id === id) {
+      el.classList.add('active');
+    } else {
+      el.classList.remove('active');
+    }
+  });
+}
+
 function setThread(id) {
   threadId = id;
+  if (id) {
+    localStorage.setItem('activeThread', id);
+    try {
+      window.history.replaceState(null, '', `#${id}`);
+    } catch (e) {}
+  } else {
+    localStorage.removeItem('activeThread');
+    try {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch (e) {}
+  }
+
   const span = threadPill.querySelector('span');
   if (span) {
     span.textContent = id ? `thread: ${id.slice(0, 16)}…` : 'no session';
   } else {
     threadPill.textContent = id ? `thread: ${id.slice(0, 16)}…` : 'no session';
   }
+  highlightActiveThread(id);
 }
 
 function newChat() {
@@ -72,6 +104,142 @@ function newChat() {
   emptyState.style.display = 'flex';
 }
 btnNew.addEventListener('click', newChat);
+if (btnSidebarNew) {
+  btnSidebarNew.addEventListener('click', newChat);
+}
+
+function formatRelativeTime(isoString) {
+  if (!isoString) return '';
+  try {
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffSec = Math.floor((now - date) / 1000);
+    if (diffSec < 60) return 'just now';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 7) return `${diffDay}d ago`;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
+async function loadHistory() {
+  if (!threadList) return;
+  try {
+    const r = await fetch(`${API}/threads`);
+    if (!r.ok) return;
+    const threads = await r.json();
+    if (!Array.isArray(threads) || threads.length === 0) {
+      threadList.innerHTML = '<div class="thread-empty-notice">No past conversations</div>';
+      return;
+    }
+    threadList.innerHTML = '';
+    threads.forEach(t => {
+      const item = document.createElement('div');
+      item.className = `thread-item ${t.thread_id === threadId ? 'active' : ''}`;
+      item.dataset.id = t.thread_id;
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'thread-title';
+      titleEl.textContent = t.title || 'Untitled Chat';
+
+      const metaEl = document.createElement('div');
+      metaEl.className = 'thread-meta';
+
+      const timeSpan = document.createElement('span');
+      timeSpan.textContent = formatRelativeTime(t.last_activity);
+
+      const costSpan = document.createElement('span');
+      costSpan.className = 'thread-cost';
+      const costVal = Number(t.cost_usd || 0);
+      costSpan.textContent = `${t.message_count} msg${t.message_count === 1 ? '' : 's'}` + (costVal > 0 ? ` · $${costVal.toFixed(4)}` : '');
+
+      metaEl.appendChild(timeSpan);
+      metaEl.appendChild(costSpan);
+      item.appendChild(titleEl);
+      item.appendChild(metaEl);
+
+      item.addEventListener('click', () => {
+        if (t.thread_id !== threadId) {
+          loadThread(t.thread_id);
+        }
+      });
+      threadList.appendChild(item);
+    });
+  } catch (err) {
+    console.warn('Failed to load history:', err);
+  }
+}
+
+async function loadThread(id) {
+  if (!id) return;
+  setLoading(true);
+  addTypingIndicator();
+  try {
+    const r = await fetch(`${API}/threads/${id}`);
+    removeTypingIndicator();
+    if (!r.ok) {
+      if (r.status === 404) {
+        console.warn(`Thread ${id} not found or unauthorized.`);
+        newChat();
+      }
+      return;
+    }
+    const data = await r.json();
+    setThread(data.thread_id);
+
+    // Clear viewport
+    hideEmpty();
+    chatWrap.innerHTML = '';
+
+    // Replay messages
+    if (Array.isArray(data.messages) && data.messages.length > 0) {
+      data.messages.forEach(msg => {
+        if (msg.role === 'human' || msg.role === 'user') {
+          addMessage('user', msg.content);
+        } else if (msg.role === 'ai' || msg.role === 'assistant') {
+          addMessage('assistant', msg.content);
+        }
+      });
+    } else {
+      chatWrap.appendChild(emptyState);
+      emptyState.style.display = 'flex';
+    }
+
+    // Check interrupted approval state
+    if (data.interrupted && data.approval_request) {
+      interrupted = true;
+      showApproval(data.approval_request);
+      addMessage('assistant', `⏸ **Approval Required**: The agent needs confirmation before proceeding with this write operation.`);
+    } else {
+      hideApproval();
+    }
+
+    const viewport = chatWrap.closest('.chat-viewport') || chatWrap;
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+  } catch (err) {
+    removeTypingIndicator();
+    console.error(`Error loading thread ${id}:`, err);
+  } finally {
+    setLoading(false);
+  }
+}
+
+// Sidebar toggle & refresh listeners
+if (btnToggleSidebar && historySidebar) {
+  btnToggleSidebar.addEventListener('click', () => {
+    historySidebar.classList.toggle('collapsed');
+  });
+}
+if (btnRefreshHistory) {
+  btnRefreshHistory.addEventListener('click', () => {
+    loadHistory();
+  });
+}
 
 // Prompt card helper
 window.fillPrompt = function(text) {
@@ -372,6 +540,7 @@ async function sendChat(question) {
         if (data.trace_id) {
           renderTraceId(bubble, data.trace_id);
         }
+        loadHistory();
       },
       // onError
       (detail) => {
@@ -468,6 +637,7 @@ async function sendResume(decision) {
         if (data.trace_id) {
           renderTraceId(bubble, data.trace_id);
         }
+        loadHistory();
       },
       // onError
       (detail) => {
@@ -528,4 +698,12 @@ btnApprove.addEventListener('click', () => sendResume('Approve'));
 btnReject.addEventListener ('click', () => sendResume('Reject'));
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-setThread(null);
+loadHistory();
+const hashThread = window.location.hash ? window.location.hash.replace('#', '').trim() : null;
+const storedThread = localStorage.getItem('activeThread');
+const startThread = hashThread || storedThread;
+if (startThread) {
+  loadThread(startThread);
+} else {
+  setThread(null);
+}

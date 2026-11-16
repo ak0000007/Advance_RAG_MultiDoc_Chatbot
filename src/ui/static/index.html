@@ -30,6 +30,13 @@
     <!-- ── Modern Header ────────────────────────────────────────────────── -->
     <header class="glass-header">
       <div class="brand">
+        <button id="btn-toggle-sidebar" class="btn-ghost btn-icon-only" title="Toggle Chat History">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
         <div class="brand-logo">
           <div class="logo-core"></div>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -86,57 +93,89 @@
       </div>
     </header>
 
-    <!-- ── Main Chat Canvas ──────────────────────────────────────────────── -->
-    <main class="chat-viewport">
-      <div id="chat-wrap" class="chat-stream">
-        
-        <!-- Stunning Empty State / Hero -->
-        <div id="empty-state" class="hero-empty">
-          <div class="hero-orb-wrap">
-            <div class="hero-orb"></div>
-            <div class="hero-ring"></div>
-            <div class="hero-icon">
-              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-              </svg>
-            </div>
+    <!-- ── Main App Body (Sidebar + Viewport) ────────────────────────────── -->
+    <div class="chat-layout-body">
+      <!-- ── History Sidebar ──────────────────────────────────────────────── -->
+      <aside id="history-sidebar" class="history-sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-title-wrap">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            <span class="sidebar-title">Chat History</span>
           </div>
-          
-          <h2 class="hero-title">How can I assist your workflow today?</h2>
-          <p class="hero-desc">
-            Direct access to indexed corporate knowledge, hybrid vector retrieval, and Salesforce opportunity management with human-in-the-loop governance.
-          </p>
-
-          <!-- Suggestion Cards -->
-          <div class="prompt-grid">
-            <div class="prompt-card" onclick="fillPrompt('Show all my recent opportunities and their current stages')">
-              <div class="prompt-icon">💼</div>
-              <div class="prompt-text">
-                <strong>Pipeline Review</strong>
-                <span>Show all recent opportunities and stages</span>
-              </div>
-            </div>
-
-            <div class="prompt-card" onclick="fillPrompt('Change stage of Acme deal to Closed Won')">
-              <div class="prompt-icon">⚡</div>
-              <div class="prompt-text">
-                <strong>Stage Update & Approval</strong>
-                <span>Change stage of an opportunity with safety check</span>
-              </div>
-            </div>
-
-            <div class="prompt-card" onclick="fillPrompt('What are our key corporate compliance and reimbursement policies?')">
-              <div class="prompt-icon">📄</div>
-              <div class="prompt-text">
-                <strong>Document Search</strong>
-                <span>Query internal documents & policies</span>
-              </div>
-            </div>
-          </div>
+          <button id="btn-refresh-history" class="btn-icon-subtle" title="Refresh history list">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M23 4v6h-6"></path>
+              <path d="M1 20v-6h6"></path>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+          </button>
         </div>
+        <button id="btn-sidebar-new" class="btn-sidebar-new" title="Start new session">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span>New Chat</span>
+        </button>
+        <div id="thread-list" class="thread-list">
+          <div class="thread-empty-notice">No past conversations</div>
+        </div>
+      </aside>
 
-      </div>
-    </main>
+      <!-- ── Main Chat Canvas ──────────────────────────────────────────────── -->
+      <main class="chat-viewport">
+        <div id="chat-wrap" class="chat-stream">
+        
+          <!-- Stunning Empty State / Hero -->
+          <div id="empty-state" class="hero-empty">
+            <div class="hero-orb-wrap">
+              <div class="hero-orb"></div>
+              <div class="hero-ring"></div>
+              <div class="hero-icon">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+              </div>
+            </div>
+          
+            <h2 class="hero-title">How can I assist your workflow today?</h2>
+            <p class="hero-desc">
+              Direct access to indexed corporate knowledge, hybrid vector retrieval, and Salesforce opportunity management with human-in-the-loop governance.
+            </p>
+
+            <!-- Suggestion Cards -->
+            <div class="prompt-grid">
+              <div class="prompt-card" onclick="fillPrompt('Show all my recent opportunities and their current stages')">
+                <div class="prompt-icon">💼</div>
+                <div class="prompt-text">
+                  <strong>Pipeline Review</strong>
+                  <span>Show all recent opportunities and stages</span>
+                </div>
+              </div>
+
+              <div class="prompt-card" onclick="fillPrompt('Change stage of Acme deal to Closed Won')">
+                <div class="prompt-icon">⚡</div>
+                <div class="prompt-text">
+                  <strong>Stage Update & Approval</strong>
+                  <span>Change stage of an opportunity with safety check</span>
+                </div>
+              </div>
+
+              <div class="prompt-card" onclick="fillPrompt('What are our key corporate compliance and reimbursement policies?')">
+                <div class="prompt-icon">📄</div>
+                <div class="prompt-text">
+                  <strong>Document Search</strong>
+                  <span>Query internal documents & policies</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </main>
+    </div>
 
     <!-- ── Floating Human Approval Panel (Cybernetic Authorization) ─────── -->
     <div id="approval-panel" class="approval-overlay">

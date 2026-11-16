@@ -149,7 +149,7 @@ def build_orchestrator_graph(
                     break
 
         try:
-            res = await classifier_chain.ainvoke({"question": user_question})
+            res = await classifier_chain.ainvoke({"question": user_question}, config=config)
             if isinstance(res, IntentClassification):
                 domain = res.domain
             elif isinstance(res, dict):
