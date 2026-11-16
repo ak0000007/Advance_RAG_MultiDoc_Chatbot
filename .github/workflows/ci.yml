@@ -41,6 +41,10 @@ jobs:
     - name: Run tests
       env:
         POSTGRES_URL: postgresql://rag_user:rag_password@localhost:5432/rag_db
+        DEV_MODE: "true"
+        ENVIRONMENT: "development"
+        LANGCHAIN_TRACING_V2: "false"
+        LANGSMITH_TRACING: "false"
       run: |
         # Check if tests directory has python files and run pytest
         if ls tests/test_*.py 1> /dev/null 2>&1; then

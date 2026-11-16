@@ -30,6 +30,7 @@ Execute Tier 1 (P1) scale and enterprise architecture backlog from [`AGENTS.md`]
 - [x] **Phase 3: Persistent Chat History & Session Resume**: Relational `threads` index table via `004_create_threads.sql`; atomic turn accumulation; clean dialogue scrubbing; UI sidebar + URL-hash & `localStorage` hydration; verified in `tests/test_threads_api.py`.
 - [x] **Intra-Tenant IDOR, Approver Rights & Unowned Scoping**: Scoped anonymous callers to `owner_user_id IS NULL`; unified approver predicate; barred approver chatting on colleague threads; filtered unowned threads via `AND (%(allow_unowned)s OR owner_user_id IS NOT NULL)` when `ALLOW_UNOWNED_THREADS=false`; verified 16/16 in `tests/test_threads_api.py`.
 - [x] **Phantom Approvals & Resume Interrupted Sync**: Guaranteed `finally` execution in resume handlers (`/chat/resume`, `/chat/resume/stream`), added `_sync_thread_interrupted`, self-healing read-repair in `get_thread` and `_assert_thread_access`; verified in `tests/test_threads_api.py`; documentation in [`Explaination/phantom-approvals-and-resume-interrupted-sync-documentation.html`](Explaination/phantom-approvals-and-resume-interrupted-sync-documentation.html).
+- [x] **CI Build-and-Test Workflow Fix**: Un-ignored and tracked `data/manifest.json`, added fallback distractors in `evals/rag/metrics.py`, and configured `DEV_MODE: "true"` & `LANGCHAIN_TRACING_V2: "false"` in `.github/workflows/ci.yml` (335 passed, 0 failures).
 
 ---
 

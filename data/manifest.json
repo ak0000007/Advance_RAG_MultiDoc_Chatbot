@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "authoritative_sources": [
+    "african_safari_bush_flight_and_luggage.txt",
+    "airline_ticket_refund_and_credit_tiers.txt",
+    "baggage_delay_loss_and_interruption.txt",
+    "business_meals_and_entertainment_rules.txt",
+    "car_rental_and_rideshare_policy.txt",
+    "corporate_travel_policy.txt",
+    "emergency_crisis_evacuation_guidelines.txt",
+    "executive_and_c_suite_travel_protocol.txt",
+    "expense_and_lodging_guidelines.txt",
+    "flight_booking_and_cabin_classes.txt",
+    "group_retreats_and_event_contracts.txt",
+    "hotel_city_tiers_and_per_diems.txt",
+    "luxury_safari_terms.txt",
+    "medical_immunization_and_evacuation_terms.txt",
+    "travel_insurance_coverage.txt",
+    "unused_ticket_credits_and_loyalty_miles.txt"
+  ],
+  "distractor_sources": [
+    "legacy_2021_expense_and_lodging_policy.txt",
+    "legacy_2022_flight_booking_rules.txt",
+    "apac_regional_travel_guidelines.txt",
+    "emea_contractor_lodging_addendum.txt",
+    "budget_safari_group_terms_2023.txt",
+    "legacy_2020_cancellation_and_voucher_policy.txt",
+    "corporate_fleet_vehicle_policy.txt",
+    "pilot_executive_perquisite_memo_2021.txt"
+  ]
+}

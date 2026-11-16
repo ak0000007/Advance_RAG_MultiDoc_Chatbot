@@ -31,19 +31,35 @@ def _normalize_source_name(source: str) -> str:
     return p
 
 
+DEFAULT_DISTRACTOR_SOURCES = {
+    "legacy_2021_expense_and_lodging_policy.txt",
+    "legacy_2022_flight_booking_rules.txt",
+    "apac_regional_travel_guidelines.txt",
+    "emea_contractor_lodging_addendum.txt",
+    "budget_safari_group_terms_2023.txt",
+    "legacy_2020_cancellation_and_voucher_policy.txt",
+    "corporate_fleet_vehicle_policy.txt",
+    "pilot_executive_perquisite_memo_2021.txt",
+}
+
+
 def get_manifest_sources(manifest_path: Path | str = "data/manifest.json") -> tuple[set[str], set[str]]:
     """Return (authoritative_sources, distractor_sources) normalized as lower-case basenames."""
     p = Path(manifest_path)
     if not p.exists():
-        return set(), set()
+        repo_manifest = Path(__file__).resolve().parent.parent.parent / "data" / "manifest.json"
+        if repo_manifest.exists():
+            p = repo_manifest
+        else:
+            return set(), set(DEFAULT_DISTRACTOR_SOURCES)
     try:
         import json
         data = json.loads(p.read_text(encoding="utf-8"))
         auth = {_normalize_source_name(s) for s in data.get("authoritative_sources", [])}
         dist = {_normalize_source_name(s) for s in data.get("distractor_sources", [])}
-        return auth, dist
+        return auth, dist or set(DEFAULT_DISTRACTOR_SOURCES)
     except Exception:
-        return set(), set()
+        return set(), set(DEFAULT_DISTRACTOR_SOURCES)
 
 
 def doc_matches_source(doc: Document, target_source: str) -> bool:

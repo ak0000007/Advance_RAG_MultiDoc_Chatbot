@@ -19,6 +19,7 @@ env/
 # Data
 data/*
 !data/.gitkeep
+!data/manifest.json
 !data/txt/
 !data/txt/**
 !data/sample_docs/
