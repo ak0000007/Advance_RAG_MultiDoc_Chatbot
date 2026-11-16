@@ -33,7 +33,7 @@ from src.api.schemas import (
     Citation,
 )
 from src.retrieval.citations import extract_citations_from_messages
-from src.api.dependencies import get_compiled_graph, get_active_graph, get_db_pool
+from src.api.dependencies import get_compiled_graph, get_active_graph, get_db_pool, get_graph_for_tenant
 from src.api.rate_limiter import get_limiter
 from src.llm.provider import is_rate_limit_error, ModelRateLimitError
 
@@ -301,6 +301,37 @@ def _resolve_caller_identity(auth_user: Optional[str | AuthUser]) -> tuple[str, 
         return tenant_id, f"key_{api_key_id}"
 
     return tenant_id, None
+
+
+async def get_graph_for_request(
+    request: Request,
+    auth_user: Optional[str | AuthUser] = Depends(_verify_auth_and_get_user),
+):
+    """
+    Resolve tenant identity and return cached compiled graph instance for tenant.
+    Honors test dependency overrides on get_active_graph, and falls back to default.
+    """
+    if hasattr(request, "app") and hasattr(request.app, "dependency_overrides"):
+        if get_active_graph in request.app.dependency_overrides:
+            override = request.app.dependency_overrides[get_active_graph]
+            return override() if callable(override) else override
+
+    from src.llm.credentials import resolve_credential
+    caller_tenant_id, _ = _resolve_caller_identity(auth_user)
+    api_key_id = getattr(auth_user, "api_key_id", None) if auth_user else None
+
+    try:
+        cred = resolve_credential(caller_tenant_id, api_key_id)
+        return get_graph_for_tenant(
+            tenant_id=cred.tenant_id,
+            provider=cred.provider,
+            model=cred.model,
+            fingerprint=cred.fingerprint,
+            api_key_id=api_key_id,
+            use_multi_agent=settings.use_multi_agent_architecture,
+        )
+    except Exception:
+        return get_active_graph()
 
 
 async def check_rate_limit(
@@ -817,7 +848,7 @@ async def chat(
     request: ChatRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
     _rate_limit: None = Depends(check_rate_limit),
-    graph=Depends(get_active_graph),
+    graph=Depends(get_graph_for_request),
 ):
     """
     Invoke the RAG graph with user question + history.
@@ -840,7 +871,7 @@ async def chat_stream(
     request: ChatRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
     _rate_limit: None = Depends(check_rate_limit),
-    graph=Depends(get_active_graph),
+    graph=Depends(get_graph_for_request),
 ):
     """
     Stream the RAG graph execution via Server-Sent Events (SSE).
@@ -866,7 +897,7 @@ async def resume_chat(
     request: ResumeRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
     _rate_limit: None = Depends(check_rate_limit),
-    graph=Depends(get_active_graph),
+    graph=Depends(get_graph_for_request),
 ):
     """
     Resume a graph that was interrupted for human approval.
@@ -921,7 +952,7 @@ async def resume_chat_stream(
     request: ResumeRequest,
     auth_user: Optional[str] = Depends(_verify_auth_and_get_user),
     _rate_limit: None = Depends(check_rate_limit),
-    graph=Depends(get_active_graph),
+    graph=Depends(get_graph_for_request),
 ):
     """
     Resume an interrupted graph and stream results via Server-Sent Events (SSE).

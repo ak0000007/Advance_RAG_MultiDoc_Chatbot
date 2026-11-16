@@ -319,7 +319,7 @@ def create_llm(
     api_key: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 600,
-    fallback_provider: str | None = "openai",
+    fallback_provider: str | None = None,
     fallback_model: str | None = None,
     fallback_api_key: str | None = None,
     structured_output: type | None = None,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Any
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -43,7 +43,15 @@ class Settings(BaseSettings):
     # API Authentication & Security
     api_secret_key: SecretStr | None = None
     sf_default_username: str | None = None
-    api_key_mapping: dict[str, dict[str, str]] = {}
+    api_key_mapping: dict[str, Any] = {}
+
+    # LLM Provider, Deployment Topology & BYOK Credential Isolation
+    llm_provider: str = "google"
+    llm_model: str | None = None
+    deployment_mode: Literal["solo", "hosted_byok", "hosted_shared"] = "solo"
+    allow_operator_fallback: bool = True
+    tenant_quota_daily_tokens: int | None = None
+    tenant_quota_monthly_tokens: int | None = None
 
     # Environment & Developer Mode
     environment: Literal["development", "production"] = "development"
@@ -101,6 +109,21 @@ class Settings(BaseSettings):
             return self.crm_enabled
         return bool(self.sf_client_id and self.sf_private_key_path) or self.mock_salesforce
 
+    @property
+    def operator_fallback_allowed(self) -> bool:
+        if self.deployment_mode == "hosted_byok":
+            return False
+        return self.allow_operator_fallback
+
+    @property
+    def global_llm_keys_present(self) -> bool:
+        return any([
+            bool(self.google_api_key.get_secret_value() if self.google_api_key else False),
+            bool(self.openai_api_key.get_secret_value() if self.openai_api_key else False),
+            bool(self.deepseek_api_key.get_secret_value() if self.deepseek_api_key else False),
+            bool(self.openrouter_api_key.get_secret_value() if self.openrouter_api_key else False),
+        ])
+
     @field_validator(
         "langsmith_tracing",
         "langfuse_enabled",
@@ -111,6 +134,7 @@ class Settings(BaseSettings):
         "dev_mode",
         "allow_unowned_threads",
         "rate_limit_enabled",
+        "allow_operator_fallback",
         mode="before",
     )
     @classmethod

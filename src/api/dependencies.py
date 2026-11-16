@@ -59,7 +59,30 @@ _DEFAULT_CLIENT = object()
 _DEFAULT_POOL = object()
 
 
-def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, checkpointer=None):
+def _build_llm(cred: Any, structured_output: type | None = None) -> BaseChatModel:
+    """Construct an LLM instance from a CredentialRef."""
+    api_key_val = cred.api_key.get_secret_value() if getattr(cred, "api_key", None) else None
+    fb_api_key_val = cred.fallback_api_key.get_secret_value() if getattr(cred, "fallback_api_key", None) else None
+
+    return create_llm(
+        provider=cred.provider,
+        model=cred.model,
+        api_key=api_key_val,
+        fallback_provider=cred.fallback_provider,
+        fallback_api_key=fb_api_key_val,
+        temperature=0.0,
+        max_tokens=2048,
+        structured_output=structured_output,
+    )
+
+
+def _prepare_core_dependencies(
+    sf_client=_DEFAULT_CLIENT,
+    pool=_DEFAULT_POOL,
+    checkpointer=None,
+    llm: BaseChatModel | None = None,
+    credential: Any = None,
+):
     """Internal helper to construct shared LLM, RAG tools, and checkpointer."""
     from src.rag.grading import ChunkGrade, RetrievalGrade, build_chunk_grader, build_retrieval_grader
     from src.rag.rewriter import build_corrective_rewriter
@@ -68,20 +91,36 @@ def _prepare_core_dependencies(sf_client=_DEFAULT_CLIENT, pool=_DEFAULT_POOL, ch
         checkpointer = pool
         pool = _DEFAULT_POOL
 
-    fallback = "openai" if settings.openai_api_key else None
-    llm = create_llm(
-        provider="google",
-        fallback_provider=fallback,
-        temperature=0.0,
-        max_tokens=2048,
-    )
-    retrieval_grader_llm = create_llm(
-        provider="google",
-        fallback_provider=fallback,
-        temperature=0.0,
-        max_tokens=2048,
-        structured_output=RetrievalGrade,
-    )
+    if credential is None:
+        from src.llm.credentials import resolve_credential
+        try:
+            credential = resolve_credential("default", None)
+        except Exception:
+            credential = None
+
+    if llm is None:
+        if credential is not None:
+            llm = _build_llm(credential)
+        else:
+            fallback = "openai" if settings.openai_api_key else None
+            llm = create_llm(
+                provider=settings.llm_provider or "google",
+                fallback_provider=fallback,
+                temperature=0.0,
+                max_tokens=2048,
+            )
+
+    if credential is not None:
+        retrieval_grader_llm = _build_llm(credential, structured_output=RetrievalGrade)
+    else:
+        fallback = "openai" if settings.openai_api_key else None
+        retrieval_grader_llm = create_llm(
+            provider=settings.llm_provider or "google",
+            fallback_provider=fallback,
+            temperature=0.0,
+            max_tokens=2048,
+            structured_output=RetrievalGrade,
+        )
 
     bge = BGEEmbeddings()
     embeddings = bge.get_embeddings()
@@ -180,6 +219,7 @@ def build_graph_with_client(
     checkpointer=None,
     pool=_DEFAULT_POOL,
     force_single_agent: bool = False,
+    credential: Any = None,
 ):
     """
     Build and return compiled LangGraph with injected or default Salesforce client.
@@ -190,12 +230,14 @@ def build_graph_with_client(
             sf_client=sf_client,
             pool=pool,
             checkpointer=checkpointer,
+            credential=credential,
         )
 
     llm, qdrant_tool, sf_client, pool, checkpointer = _prepare_core_dependencies(
         sf_client=sf_client,
         pool=pool,
         checkpointer=checkpointer,
+        credential=credential,
     )
 
     tools = [qdrant_tool]
@@ -233,6 +275,7 @@ def build_multi_agent_graph(
     sf_client=_DEFAULT_CLIENT,
     pool=_DEFAULT_POOL,
     checkpointer=None,
+    credential: Any = None,
     **kwargs,
 ):
     """
@@ -253,6 +296,7 @@ def build_multi_agent_graph(
         sf_client=sf_client,
         pool=pool,
         checkpointer=checkpointer,
+        credential=credential,
     )
 
     # 1. CRM Specialist Tools
@@ -316,6 +360,30 @@ def build_multi_agent_graph(
         docs_graph=docs_graph,
         llm=llm,
         checkpointer=checkpointer,
+    )
+
+
+GRAPH_CACHE_MAX_TENANTS = 16
+
+
+@lru_cache(maxsize=GRAPH_CACHE_MAX_TENANTS)
+def get_graph_for_tenant(
+    tenant_id: str,
+    provider: str,
+    model: str | None,
+    fingerprint: str,
+    api_key_id: str | None = None,
+    use_multi_agent: bool = False,
+):
+    """
+    Resolve tenant credential and return cached compiled graph instance.
+    Bounded by GRAPH_CACHE_MAX_TENANTS with LRU eviction to prevent memory bloat.
+    """
+    from src.llm.credentials import resolve_credential
+    cred = resolve_credential(tenant_id, api_key_id)
+    return build_graph_with_client(
+        force_single_agent=not use_multi_agent,
+        credential=cred,
     )
 
 

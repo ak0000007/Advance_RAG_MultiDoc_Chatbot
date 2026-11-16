@@ -123,7 +123,52 @@ def validate_runtime_config(settings: Any) -> tuple[list[str], list[str]]:
             "Session states and pending approvals will not be shared across worker processes."
         )
 
-    # 10. Summary log
+    # 10. Deployment topology and credential isolation (BYOK)
+    dep_mode = getattr(settings, "deployment_mode", "solo")
+    global_keys_present = getattr(settings, "global_llm_keys_present", False)
+
+    if dep_mode == "hosted_byok":
+        if is_prod and global_keys_present:
+            fatals.append(
+                "Refusing to start: a shared provider key is configured while DEPLOYMENT_MODE=hosted_byok. "
+                "Remove GOOGLE_API_KEY/OPENAI_API_KEY so tenants cannot consume operator credit."
+            )
+        elif global_keys_present:
+            warnings.append(
+                "DEPLOYMENT_MODE=hosted_byok with global keys present: global keys will be ignored for tenant resolution."
+            )
+
+        if not api_key_mapping:
+            fatals.append("DEPLOYMENT_MODE=hosted_byok requires API_KEY_MAPPING with per-tenant 'llm_api_key'.")
+        else:
+            for k, val in api_key_mapping.items():
+                if isinstance(val, dict):
+                    if not val.get("llm_api_key"):
+                        fatals.append(
+                            f"Tenant '{val.get('tenant_id', k)}' has no 'llm_api_key' in API_KEY_MAPPING. "
+                            "BYOK mode requires every tenant to supply their own key."
+                        )
+                else:
+                    fatals.append(
+                        f"Tenant '{k}' has legacy string mapping in API_KEY_MAPPING. "
+                        "BYOK mode requires object mapping with 'llm_api_key'."
+                    )
+
+    elif dep_mode == "hosted_shared":
+        if not global_keys_present:
+            fatals.append("DEPLOYMENT_MODE=hosted_shared requires at least one global LLM key (GOOGLE_API_KEY, OPENAI_API_KEY, etc.).")
+        quota_daily = getattr(settings, "tenant_quota_daily_tokens", None)
+        quota_monthly = getattr(settings, "tenant_quota_monthly_tokens", None)
+        if quota_daily is None and quota_monthly is None:
+            fatals.append("DEPLOYMENT_MODE=hosted_shared requires a token quota (TENANT_QUOTA_DAILY_TOKENS or TENANT_QUOTA_MONTHLY_TOKENS).")
+        if not getattr(settings, "postgres_url", None):
+            fatals.append("DEPLOYMENT_MODE=hosted_shared requires POSTGRES_URL for quota persistence.")
+
+    elif dep_mode == "solo":
+        if not global_keys_present:
+            warnings.append("DEPLOYMENT_MODE=solo has no global LLM key configured. Requests will fail if no tenant key is provided.")
+
+    # 11. Summary log
     auth_mode = (
         "salesforce_jwt"
         if getattr(settings, "sf_auth_enabled", False)
@@ -133,13 +178,14 @@ def validate_runtime_config(settings: Any) -> tuple[list[str], list[str]]:
     crm_desc = "active (mock)" if mock_sf else ("active" if crm_active else "disabled (docs_only)")
 
     logger.info(
-        "Startup Configuration Summary: backend=%s, audit=%s, auth=%s, crm=%s, dev_mode=%s, env=%s",
+        "Startup Configuration Summary: backend=%s, audit=%s, auth=%s, crm=%s, dev_mode=%s, env=%s, deployment_mode=%s",
         backend,
         audit_status,
         auth_mode,
         crm_desc,
         getattr(settings, "dev_mode", False),
         getattr(settings, "environment", "development"),
+        dep_mode,
     )
 
     return fatals, warnings
